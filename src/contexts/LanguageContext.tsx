@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 type Language = 'ko' | 'en';
@@ -37,13 +36,14 @@ const translations = {
     'chat.references': '참조 문서',
     'chat.page': '페이지',
     'chat.welcome': '안녕하세요! 대출 관련 질문을 도와드리겠습니다.',
+    'chat.noDocument': '참조 문서가 표시됩니다',
     
     // Auth
     'auth.title': '로그인',
     'auth.email': '이메일',
     'auth.password': '비밀번호',
     'auth.login': '로그인',
-    'auth.adminOnly': '관리자만 접근 가능합니다',
+    'auth.adminOnly': '로그인이 필요합니다',
     
     // Common
     'common.loading': '로딩 중...',
@@ -77,13 +77,14 @@ const translations = {
     'chat.references': 'Reference Documents',
     'chat.page': 'Page',
     'chat.welcome': 'Hello! I\'m here to help with your loan-related questions.',
+    'chat.noDocument': 'Reference documents will appear here',
     
     // Auth
     'auth.title': 'Login',
     'auth.email': 'Email',
     'auth.password': 'Password',
     'auth.login': 'Login',
-    'auth.adminOnly': 'Admin access only',
+    'auth.adminOnly': 'Please log in',
     
     // Common
     'common.loading': 'Loading...',

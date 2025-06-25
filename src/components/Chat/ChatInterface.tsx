@@ -3,11 +3,14 @@ import React, { useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Send, Bot, User, ExternalLink } from 'lucide-react';
+import { Send, Bot, User } from 'lucide-react';
 import { ChatMessage } from '@/types';
 
-const ChatInterface = () => {
+interface ChatInterfaceProps {
+  onMessageSent?: () => void;
+}
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ onMessageSent }) => {
   const { t } = useLanguage();
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -34,19 +37,24 @@ const ChatInterface = () => {
     setMessage('');
     setIsLoading(true);
 
+    // Call the callback to show PDF viewer
+    if (onMessageSent) {
+      onMessageSent();
+    }
+
     // Mock AI response - replace with actual OpenAI API call
     setTimeout(() => {
       const assistantMessage: ChatMessage = {
         id: Math.random().toString(36).substr(2, 9),
         type: 'assistant',
-        content: "Yes, newly appointed government officers can apply for public loans. You'll need to provide employment verification documents. Please refer to the specific requirements outlined in the loan policy guide.",
+        content: "네, 새로 임용된 공무원도 공적 대출을 신청할 수 있습니다. 재직증명서 등의 서류가 필요합니다. 대출 정책 가이드의 구체적인 요건을 참조해 주세요.",
         timestamp: new Date().toISOString(),
         references: [
           {
             documentId: '1',
             filename: 'loan_products_guide_ko.pdf',
             pageNumber: 7,
-            relevantText: 'Government officers with at least 3 months of employment...'
+            relevantText: '재직 3개월 이상인 공무원은 재직증명서와 함께...'
           }
         ]
       };
