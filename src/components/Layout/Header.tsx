@@ -3,10 +3,10 @@ import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Languages, LogOut, FileText, MessageCircle, Shield } from 'lucide-react';
+import { LogOut, FileText, MessageCircle, Shield } from 'lucide-react';
 
 const Header = () => {
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const { user, logout } = useAuth();
 
   return (
@@ -44,16 +44,6 @@ const Header = () => {
           </div>
 
           <div className="flex items-center space-x-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setLanguage(language === 'ko' ? 'en' : 'ko')}
-              className="flex items-center space-x-2"
-            >
-              <Languages className="w-4 h-4" />
-              <span>{language === 'ko' ? '한국어' : 'English'}</span>
-            </Button>
-
             {user && (
               <div className="flex items-center space-x-3">
                 <span className="text-sm text-gray-700">{user.name}</span>
