@@ -1,105 +1,343 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Upload, FileText, Clock, Hash, HardDrive } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { 
+  Upload, 
+  FileText, 
+  Clock, 
+  Hash, 
+  HardDrive, 
+  CheckCircle, 
+  XCircle, 
+  Loader2,
+  AlertTriangle,
+  RefreshCw
+} from 'lucide-react';
 import { Document } from '@/types';
+
+// API 설정
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
+interface UploadProgress {
+  stage: 'uploading' | 'processing' | 'completed' | 'failed';
+  message: string;
+  progress: number;
+}
 
 const DocumentUpload = () => {
   const { t } = useLanguage();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [documents, setDocuments] = useState<Document[]>([
-    {
-      id: '1',
-      filename: 'loan_products_guide_ko.pdf',
-      uploadTime: '2024-06-25 14:30',
-      chunks: 45,
-      size: '2.3 MB',
-      language: 'ko'
-    },
-    {
-      id: '2',
-      filename: 'public_loan_policy_en.pdf',
-      uploadTime: '2024-06-25 13:15',
-      chunks: 32,
-      size: '1.8 MB',
-      language: 'en'
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 문서 목록 조회
+  const fetchDocuments = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_BASE_URL}/documents?limit=50`);
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        const formattedDocs = data.data.map((doc: any) => ({
+          id: doc.id,
+          filename: doc.filename,
+          uploadTime: new Date(doc.created_at).toLocaleString('ko-KR'),
+          chunks: doc.chunk_count || 0,
+          size: doc.file_size || 'Unknown',
+          language: doc.language || 'ko',
+          status: doc.status,
+          processedAt: doc.processed_at,
+          errorMessage: doc.error_message
+        }));
+        setDocuments(formattedDocs);
+      }
+    } catch (err) {
+      console.error('문서 목록 조회 실패:', err);
+      setError('문서 목록을 불러오는데 실패했습니다.');
+    } finally {
+      setLoading(false);
     }
-  ]);
+  };
+
+  // 컴포넌트 마운트 시 문서 목록 조회
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file && file.type === 'application/pdf') {
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        setError('PDF 파일만 업로드 가능합니다.');
+        return;
+      }
+      
+      if (file.size > 50 * 1024 * 1024) { // 50MB 제한
+        setError('파일 크기는 50MB 이하여야 합니다.');
+        return;
+      }
+      
       setSelectedFile(file);
+      setError(null);
     }
   };
 
   const handleUpload = async () => {
     if (!selectedFile) return;
     
-    setUploading(true);
-    // Mock upload process - replace with actual Supabase upload
-    setTimeout(() => {
-      const newDoc: Document = {
-        id: Math.random().toString(36).substr(2, 9),
-        filename: selectedFile.name,
-        uploadTime: new Date().toLocaleString('ko-KR'),
-        chunks: Math.floor(Math.random() * 50) + 10,
-        size: `${(selectedFile.size / 1024 / 1024).toFixed(1)} MB`,
-        language: 'ko'
+    setError(null);
+    setUploadProgress({
+      stage: 'uploading',
+      message: '파일을 업로드하는 중...',
+      progress: 0
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      // 파일 업로드 (실제 구현 시 FastAPI 엔드포인트에 맞게 수정)
+      const uploadResponse = await fetch(`${API_BASE_URL}/upload-pdf`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error('파일 업로드에 실패했습니다.');
+      }
+
+      const uploadResult = await uploadResponse.json();
+      const documentId = uploadResult.document_id;
+
+      // 업로드 완료, 처리 시작
+      setUploadProgress({
+        stage: 'processing',
+        message: 'PDF를 분석하고 벡터화하는 중...',
+        progress: 30
+      });
+
+      // 처리 상태 폴링
+      const pollProcessingStatus = async () => {
+        let attempts = 0;
+        const maxAttempts = 60; // 최대 5분 (5초 간격)
+
+        const poll = async () => {
+          try {
+            const statusResponse = await fetch(`${API_BASE_URL}/documents/${documentId}/status`);
+            const statusData = await statusResponse.json();
+
+            if (statusData.status === 'completed') {
+              setUploadProgress({
+                stage: 'completed',
+                message: '처리가 완료되었습니다!',
+                progress: 100
+              });
+              
+              // 문서 목록 새로고침
+              await fetchDocuments();
+              
+              // 3초 후 상태 초기화
+              setTimeout(() => {
+                setUploadProgress(null);
+                setSelectedFile(null);
+              }, 3000);
+              
+            } else if (statusData.status === 'failed') {
+              throw new Error(statusData.error_message || '처리 중 오류가 발생했습니다.');
+            } else if (statusData.status === 'processing') {
+              const progress = Math.min(30 + (attempts * 2), 90);
+              setUploadProgress({
+                stage: 'processing',
+                message: '텍스트 추출 및 임베딩 생성 중...',
+                progress
+              });
+              
+              attempts++;
+              if (attempts < maxAttempts) {
+                setTimeout(poll, 5000); // 5초마다 상태 확인
+              } else {
+                throw new Error('처리 시간이 초과되었습니다.');
+              }
+            } else {
+              // pending 상태
+              setTimeout(poll, 5000);
+            }
+          } catch (error) {
+            console.error('상태 확인 중 오류:', error);
+            setUploadProgress({
+              stage: 'failed',
+              message: error instanceof Error ? error.message : '처리 중 오류가 발생했습니다.',
+              progress: 0
+            });
+          }
+        };
+
+        poll();
       };
-      setDocuments([newDoc, ...documents]);
-      setSelectedFile(null);
-      setUploading(false);
-    }, 2000);
+
+      pollProcessingStatus();
+
+    } catch (err) {
+      console.error('업로드 실패:', err);
+      setUploadProgress({
+        stage: 'failed',
+        message: err instanceof Error ? err.message : '업로드에 실패했습니다.',
+        progress: 0
+      });
+    }
+  };
+
+  const handleRetry = () => {
+    setUploadProgress(null);
+    setError(null);
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle className="w-4 h-4 text-green-600" />;
+      case 'failed':
+        return <XCircle className="w-4 h-4 text-red-600" />;
+      case 'processing':
+        return <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />;
+      default:
+        return <Clock className="w-4 h-4 text-yellow-600" />;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'failed':
+        return 'bg-red-100 text-red-800 border-red-200';
+      case 'processing':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      default:
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    }
   };
 
   return (
     <div className="space-y-6">
+      {/* 시스템 상태 표시 */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Upload className="w-5 h-5 text-blue-600" />
-            <span>{t('admin.upload')}</span>
+          <CardTitle className="flex items-center justify-between">
+            <span className="flex items-center space-x-2">
+              <Upload className="w-5 h-5 text-blue-600" />
+              <span>{t('admin.upload')}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchDocuments}
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
           </CardTitle>
           <CardDescription>{t('admin.uploadDesc')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 에러 메시지 */}
+          {error && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* 업로드 영역 */}
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
             <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <Input
-              type="file"
-              accept=".pdf"
-              onChange={handleFileSelect}
-              className="mb-4"
-            />
-            {selectedFile && (
-              <div className="text-sm text-gray-600 mb-4">
-                Selected: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(1)} MB)
+            
+            {!uploadProgress ? (
+              <>
+                <Input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileSelect}
+                  className="mb-4"
+                  disabled={loading}
+                />
+                {selectedFile && (
+                  <div className="text-sm text-gray-600 mb-4 p-3 bg-gray-50 rounded">
+                    <p className="font-medium">{selectedFile.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                    </p>
+                  </div>
+                )}
+                <Button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || loading}
+                  className="w-full"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {t('common.loading')}
+                    </>
+                  ) : (
+                    t('admin.uploadButton')
+                  )}
+                </Button>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-center space-x-2">
+                  {uploadProgress.stage === 'uploading' && <Upload className="w-5 h-5 text-blue-600" />}
+                  {uploadProgress.stage === 'processing' && <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />}
+                  {uploadProgress.stage === 'completed' && <CheckCircle className="w-5 h-5 text-green-600" />}
+                  {uploadProgress.stage === 'failed' && <XCircle className="w-5 h-5 text-red-600" />}
+                  <span className="text-sm font-medium">{uploadProgress.message}</span>
+                </div>
+                
+                <Progress value={uploadProgress.progress} className="w-full" />
+                
+                {uploadProgress.stage === 'failed' && (
+                  <Button
+                    onClick={handleRetry}
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                  >
+                    다시 시도
+                  </Button>
+                )}
               </div>
             )}
-            <Button
-              onClick={handleUpload}
-              disabled={!selectedFile || uploading}
-              className="w-full"
-            >
-              {uploading ? t('common.loading') : t('admin.uploadButton')}
-            </Button>
           </div>
         </CardContent>
       </Card>
 
+      {/* 문서 목록 */}
       <Card>
         <CardHeader>
-          <CardTitle>{t('admin.documents')}</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>{t('admin.documents')}</span>
+            <span className="text-sm text-gray-500">
+              총 {documents.length}개 문서
+            </span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          {documents.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+              <span className="ml-2 text-gray-600">문서 목록을 불러오는 중...</span>
+            </div>
+          ) : documents.length === 0 ? (
             <div className="text-center text-gray-500 py-8">
-              {t('admin.noDocuments')}
+              <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p>{t('admin.noDocuments')}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -110,25 +348,42 @@ const DocumentUpload = () => {
                 >
                   <div className="flex items-center space-x-3">
                     <FileText className="w-5 h-5 text-blue-600" />
-                    <div>
+                    <div className="flex-1">
                       <div className="font-medium text-gray-900">{doc.filename}</div>
                       <div className="flex items-center space-x-4 text-sm text-gray-500">
                         <span className="flex items-center space-x-1">
                           <Clock className="w-3 h-3" />
                           <span>{doc.uploadTime}</span>
                         </span>
-                        <span className="flex items-center space-x-1">
-                          <Hash className="w-3 h-3" />
-                          <span>{doc.chunks} chunks</span>
-                        </span>
+                        {doc.chunks > 0 && (
+                          <span className="flex items-center space-x-1">
+                            <Hash className="w-3 h-3" />
+                            <span>{doc.chunks} chunks</span>
+                          </span>
+                        )}
                         <span className="flex items-center space-x-1">
                           <HardDrive className="w-3 h-3" />
                           <span>{doc.size}</span>
                         </span>
                       </div>
+                      {doc.errorMessage && (
+                        <div className="text-xs text-red-600 mt-1 truncate max-w-md">
+                          오류: {doc.errorMessage}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
+                    <span className={`px-2 py-1 rounded-full text-xs border ${getStatusColor(doc.status)}`}>
+                      <span className="flex items-center space-x-1">
+                        {getStatusIcon(doc.status)}
+                        <span>
+                          {doc.status === 'completed' ? '완료' :
+                           doc.status === 'failed' ? '실패' :
+                           doc.status === 'processing' ? '처리중' : '대기중'}
+                        </span>
+                      </span>
+                    </span>
                     <span className={`px-2 py-1 rounded-full text-xs ${
                       doc.language === 'ko' 
                         ? 'bg-blue-100 text-blue-800' 
