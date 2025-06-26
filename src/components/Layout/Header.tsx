@@ -3,7 +3,7 @@ import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, FileText, MessageCircle, Shield } from 'lucide-react';
+import { LogOut, FileText, MessageCircle } from 'lucide-react';
 
 const Header = () => {
   const { t } = useLanguage();
@@ -30,15 +30,6 @@ const Header = () => {
                   <MessageCircle className="w-4 h-4" />
                   <span>{t('nav.chat')}</span>
                 </a>
-                {user.role === 'admin' && (
-                  <a
-                    href="/admin"
-                    className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                  >
-                    <Shield className="w-4 h-4" />
-                    <span>{t('nav.admin')}</span>
-                  </a>
-                )}
               </nav>
             )}
           </div>
