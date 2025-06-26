@@ -54,7 +54,7 @@ const Header = () => {
               <span>{language === 'ko' ? '한국어' : 'English'}</span>
             </Button>
 
-            {user ? (
+            {user && (
               <div className="flex items-center space-x-3">
                 <span className="text-sm text-gray-700">{user.name}</span>
                 <Button
@@ -67,14 +67,6 @@ const Header = () => {
                   <span>{t('nav.logout')}</span>
                 </Button>
               </div>
-            ) : (
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => window.location.href = '/login'}
-              >
-                {t('nav.login')}
-              </Button>
             )}
           </div>
         </div>
