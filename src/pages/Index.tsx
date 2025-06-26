@@ -1,6 +1,5 @@
 
 import React, { useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Header from '@/components/Layout/Header';
 import ChatInterface from '@/components/Chat/ChatInterface';
@@ -9,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FileText, MessageCircle } from 'lucide-react';
 
 const Index = () => {
-  const { user } = useAuth();
   const { t } = useLanguage();
   const [showPDFViewer, setShowPDFViewer] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<{
@@ -25,24 +23,6 @@ const Index = () => {
       pageNumber: 7
     });
   };
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Header />
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="text-center">
-            <h1 className="text-4xl font-bold text-gray-900 mb-8">
-              {t('chat.title')}
-            </h1>
-            <p className="text-lg text-gray-600 mb-8">
-              {t('auth.adminOnly')}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50">
