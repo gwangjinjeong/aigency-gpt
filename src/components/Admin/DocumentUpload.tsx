@@ -5,21 +5,30 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { 
-  Upload, 
-  FileText, 
-  Clock, 
-  Hash, 
-  HardDrive, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Upload,
+  FileText,
+  Clock,
+  Hash,
+  HardDrive,
+  CheckCircle,
+  XCircle,
   Loader2,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
-// API 설정
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+// API 설정 - 연결 상태 확인 포함
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // 정확한 타입 정의
 interface ApiDocument {
@@ -81,12 +90,52 @@ const DocumentUpload = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverStatus, setServerStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+
+  // 서버 연결 확인
+  const checkServerConnection = async () => {
+    try {
+      setServerStatus('checking');
+      const response = await fetch(`${API_BASE_URL}/health`, {
+        method: 'GET',
+        // timeout: 5000
+      });
+
+      if (response.ok) {
+        setServerStatus('connected');
+        console.log(`✅ API server connected at: ${API_BASE_URL}`);
+        return true;
+      }
+    } catch (error) {
+      console.log(`❌ No server at: ${API_BASE_URL}`);
+      setServerStatus('disconnected');
+      return false;
+    }
+    return false;
+  };
 
   // 문서 목록 조회
   const fetchDocuments = async () => {
+    if (serverStatus !== 'connected') {
+      setError('API 서버에 연결되지 않았습니다. 백엔드 서버를 실행해주세요.');
+      return;
+    }
+
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/documents?limit=50`);
+      console.log('API 호출:', `${API_BASE_URL}/documents?limit=50`);
+
+      const response = await fetch(`${API_BASE_URL}/documents?limit=50`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data: ApiResponse<ApiDocument[]> = await response.json();
 
       if (data.status === 'success') {
@@ -95,25 +144,33 @@ const DocumentUpload = () => {
           filename: doc.filename,
           uploadTime: new Date(doc.created_at).toLocaleString('ko-KR'),
           chunks: doc.chunk_count || 0,
-          size: doc.file_size || 'Unknown',
+          size: typeof doc.file_size === 'number' ? `${(doc.file_size / 1024 / 1024).toFixed(1)} MB` : 'Unknown',
           language: doc.language || 'ko',
           status: doc.status,
           processedAt: doc.processed_at,
           errorMessage: doc.error_message
         }));
         setDocuments(formattedDocs);
+        setError(null);
       }
     } catch (err) {
       console.error('문서 목록 조회 실패:', err);
-      setError('문서 목록을 불러오는데 실패했습니다.');
+      setError(`서버 연결 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // 컴포넌트 마운트 시 문서 목록 조회
+  // 컴포넌트 마운트 시 서버 연결 확인 및 문서 목록 조회
   useEffect(() => {
-    fetchDocuments();
+    const initializeComponent = async () => {
+      const isConnected = await checkServerConnection();
+      if (isConnected) {
+        await fetchDocuments();
+      }
+    };
+
+    initializeComponent();
   }, []);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -135,7 +192,7 @@ const DocumentUpload = () => {
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || serverStatus !== 'connected') return;
 
     setError(null);
     setUploadProgress({
@@ -244,6 +301,13 @@ const DocumentUpload = () => {
     setError(null);
   };
 
+  const handleRefresh = async () => {
+    const isConnected = await checkServerConnection();
+    if (isConnected) {
+      await fetchDocuments();
+    }
+  };
+
   const getStatusIcon = (status: Document['status']) => {
     switch (status) {
       case 'completed':
@@ -279,9 +343,41 @@ const DocumentUpload = () => {
     }
   };
 
+  // 서버 상태 표시 컴포넌트
+  const ServerStatusIndicator = () => (
+    <div className="flex items-center space-x-2 text-sm">
+      {serverStatus === 'checking' && (
+        <>
+          <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+          <span className="text-gray-600">서버 연결 확인 중...</span>
+        </>
+      )}
+      {serverStatus === 'connected' && (
+        <>
+          <Wifi className="w-4 h-4 text-green-600" />
+          <span className="text-green-600">서버 연결됨</span>
+        </>
+      )}
+      {serverStatus === 'disconnected' && (
+        <>
+          <WifiOff className="w-4 h-4 text-red-600" />
+          <span className="text-red-600">서버 연결 실패</span>
+          <Button
+            onClick={handleRefresh}
+            size="sm"
+            variant="outline"
+            className="ml-2"
+          >
+            다시 시도
+          </Button>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* 시스템 상태 표시 */}
+      {/* 서버 상태 표시 */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
@@ -289,17 +385,43 @@ const DocumentUpload = () => {
               <Upload className="w-5 h-5 text-blue-600" />
               <span>PDF 업로드</span>
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchDocuments}
-              disabled={loading}
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
+            <div className="flex items-center space-x-2">
+              <ServerStatusIndicator />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={loading || serverStatus === 'checking'}
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
           </CardTitle>
           <CardDescription>PDF 파일을 업로드하여 AI 벡터화 처리를 시작하세요</CardDescription>
         </CardHeader>
+
+        {/* 서버 연결 실패 시 경고 메시지 */}
+        {serverStatus === 'disconnected' && (
+          <CardContent>
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="space-y-2">
+                  <p>백엔드 서버에 연결할 수 없습니다. ({API_BASE_URL})</p>
+                  <div className="text-sm">
+                    <p className="font-medium">해결 방법:</p>
+                    <ol className="list-decimal list-inside space-y-1 mt-1">
+                      <li>터미널에서 <code className="bg-gray-100 px-1 rounded">cd backend</code></li>
+                      <li><code className="bg-gray-100 px-1 rounded">python main.py</code> 실행</li>
+                      <li>서버가 http://localhost:8000 에서 실행되는지 확인</li>
+                    </ol>
+                  </div>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        )}
+
         <CardContent className="space-y-4">
           {/* 에러 메시지 */}
           {error && (
@@ -320,7 +442,7 @@ const DocumentUpload = () => {
                   accept=".pdf"
                   onChange={handleFileSelect}
                   className="mb-4"
-                  disabled={loading}
+                  disabled={loading || serverStatus !== 'connected'}
                 />
                 {selectedFile && (
                   <div className="text-sm text-gray-600 mb-4 p-3 bg-gray-50 rounded">
@@ -332,7 +454,7 @@ const DocumentUpload = () => {
                 )}
                 <Button
                   onClick={handleUpload}
-                  disabled={!selectedFile || loading}
+                  disabled={!selectedFile || loading || serverStatus !== 'connected'}
                   className="w-full"
                 >
                   {loading ? (
@@ -393,6 +515,9 @@ const DocumentUpload = () => {
             <div className="text-center text-gray-500 py-8">
               <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <p>업로드된 문서가 없습니다</p>
+              {serverStatus === 'disconnected' && (
+                <p className="text-sm mt-2">서버 연결 후 새로고침해주세요</p>
+              )}
             </div>
           ) : (
             <div className="space-y-4">

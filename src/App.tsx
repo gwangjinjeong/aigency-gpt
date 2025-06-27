@@ -1,11 +1,12 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { LanguageProvider } from '@/contexts/LanguageContext';
-import { Toaster } from '@/components/ui/toaster';
-import LandingPage from '@/pages/LandingPage';
-import ChatPage from '@/pages/ChatPage';
-import AdminPage from '@/pages/AdminPage';
-import LoginPage from '@/pages/LoginPage';
+// 상대 경로로 변경
+import { LanguageProvider } from './contexts/LanguageContext';
+import { Toaster } from './components/ui/toaster';
+import LandingPage from './pages/LandingPage';
+import ChatPage from './pages/ChatPage';
+import AdminPage from './pages/AdminPage';
+import LoginPage from './pages/LoginPage';
 
 // 메인 앱 컴포넌트
 const AppContent: React.FC = () => {
@@ -63,7 +64,7 @@ const AppContent: React.FC = () => {
   );
 };
 
-// 최상위 App 컴포넌트
+// 최상위 App 컴포넌트 - Auth 제거
 const App: React.FC = () => {
   return (
     <LanguageProvider>

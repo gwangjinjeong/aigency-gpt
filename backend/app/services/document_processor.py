@@ -9,6 +9,9 @@ from datetime import datetime
 from typing import List, Dict
 import traceback
 import json
+import tempfile
+import shutil
+from pathlib import Path
 
 # ChromaDB 클라이언트 초기화
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -21,94 +24,134 @@ except Exception:
     vector_collection = chroma_client.create_collection(name=collection_name)
     print(f"ChromaDB collection '{collection_name}'을 새로 생성했습니다.")
 
+# 🔥 PDF 파일 캐시 관리
+PDF_CACHE_DIR = "./pdf_cache"
+os.makedirs(PDF_CACHE_DIR, exist_ok=True)
+
+
+class PDFFileManager:
+    """PDF 파일 생명주기 관리 클래스"""
+
+    @staticmethod
+    def get_cached_path(document_id: str) -> str:
+        """캐시된 PDF 파일 경로 반환"""
+        return os.path.join(PDF_CACHE_DIR, f"{document_id}.pdf")
+
+    @staticmethod
+    def is_cached(document_id: str) -> bool:
+        """PDF 파일이 캐시되어 있는지 확인"""
+        cached_path = PDFFileManager.get_cached_path(document_id)
+        return os.path.exists(cached_path) and os.path.getsize(cached_path) > 0
+
+    @staticmethod
+    def save_to_cache(document_id: str, file_content: bytes) -> str:
+        """PDF 파일을 캐시에 저장"""
+        cached_path = PDFFileManager.get_cached_path(document_id)
+        with open(cached_path, 'wb') as f:
+            f.write(file_content)
+        return cached_path
+
+    @staticmethod
+    def get_or_download(document_id: str, file_url: str) -> str:
+        """캐시에서 파일을 가져오거나 새로 다운로드"""
+        cached_path = PDFFileManager.get_cached_path(document_id)
+
+        # 캐시에 있으면 반환
+        if PDFFileManager.is_cached(document_id):
+            print(f"[{document_id}] 캐시된 파일 사용: {cached_path}")
+            return cached_path
+
+        # 없으면 다운로드 후 캐시에 저장
+        print(f"[{document_id}] 파일 다운로드 및 캐시 저장...")
+        file_content = PDFFileManager._download_file(file_url, document_id)
+        return PDFFileManager.save_to_cache(document_id, file_content)
+
+    @staticmethod
+    def _download_file(file_url: str, document_id: str) -> bytes:
+        """파일 다운로드 (Supabase Storage 또는 공개 URL)"""
+        bucket_name = "pdf-documents"
+
+        try:
+            # Supabase Storage에서 다운로드 시도
+            if f"/{bucket_name}/" in file_url:
+                path_in_storage = file_url.split(f"/{bucket_name}/")[-1]
+            else:
+                path_in_storage = file_url.split("/")[-1]
+
+            print(f"[{document_id}] Supabase Storage에서 다운로드: {path_in_storage}")
+            file_bytes = supabase.storage.from_(bucket_name).download(path_in_storage)
+
+            if file_bytes and isinstance(file_bytes, bytes) and len(file_bytes) > 0:
+                print(f"[{document_id}] Supabase Storage 다운로드 성공: {len(file_bytes)} bytes")
+                return file_bytes
+            else:
+                raise Exception("Supabase Storage에서 빈 파일 또는 잘못된 응답")
+
+        except Exception as storage_error:
+            print(f"[{document_id}] Supabase Storage 다운로드 실패: {storage_error}")
+
+            # 공개 URL로 대안 다운로드
+            try:
+                print(f"[{document_id}] 공개 URL로 다운로드 시도...")
+                response = requests.get(file_url, timeout=30)
+                response.raise_for_status()
+
+                if len(response.content) == 0:
+                    raise Exception("공개 URL에서 빈 파일 다운로드됨")
+
+                print(f"[{document_id}] 공개 URL 다운로드 성공: {len(response.content)} bytes")
+                return response.content
+
+            except Exception as url_error:
+                raise Exception(f"모든 다운로드 방법 실패 - Storage: {storage_error}, URL: {url_error}")
+
+    @staticmethod
+    def cleanup_cache(document_id: str = None):
+        """캐시 파일 정리"""
+        if document_id:
+            # 특정 문서 캐시 삭제
+            cached_path = PDFFileManager.get_cached_path(document_id)
+            if os.path.exists(cached_path):
+                os.remove(cached_path)
+                print(f"[{document_id}] 캐시 파일 삭제: {cached_path}")
+        else:
+            # 전체 캐시 정리 (선택적)
+            pass
+
 
 async def download_pdf_from_supabase(file_url: str, document_id: str) -> str:
     """
-    Supabase Storage의 PDF 파일을 다운로드하여 로컬에 저장합니다.
+    🔥 개선된 PDF 다운로드 (캐시 활용)
     """
-    bucket_name = "pdf-documents"
-
-    try:
-        if f"/{bucket_name}/" in file_url:
-            path_in_storage = file_url.split(f"/{bucket_name}/")[-1]
-        else:
-            path_in_storage = file_url.split("/")[-1]
-
-        print(f"[{document_id}] Storage 경로: {path_in_storage}")
-    except Exception as e:
-        raise Exception(f"파일 경로 추출 실패: {e}")
-
-    # 임시 파일 경로 설정
-    temp_file_path = f"/tmp/{document_id}.pdf"
-    os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
-
-    try:
-        print(f"[{document_id}] Supabase Storage에서 다운로드 시작...")
-
-        # Supabase에서 파일 다운로드
-        file_bytes = supabase.storage.from_(bucket_name).download(path_in_storage)
-
-        if file_bytes is None:
-            raise Exception("파일 다운로드 실패: 빈 응답")
-
-        if not isinstance(file_bytes, bytes):
-            raise Exception(f"예상치 못한 응답 타입: {type(file_bytes)}")
-
-        # 파일 저장
-        with open(temp_file_path, "wb") as f:
-            f.write(file_bytes)
-
-        file_size = os.path.getsize(temp_file_path)
-        if file_size == 0:
-            raise Exception("다운로드된 파일이 비어있습니다")
-
-        print(f"[{document_id}] PDF 파일 다운로드 성공: {temp_file_path} ({file_size} bytes)")
-        return temp_file_path
-
-    except Exception as e:
-        print(f"[{document_id}] Supabase Storage 다운로드 중 오류 발생: {e}")
-
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-
-        # 대안: 공개 URL로 직접 다운로드 시도
-        try:
-            print(f"[{document_id}] 공개 URL로 직접 다운로드 시도...")
-            response = requests.get(file_url, timeout=30)
-            response.raise_for_status()
-
-            with open(temp_file_path, "wb") as f:
-                f.write(response.content)
-
-            file_size = os.path.getsize(temp_file_path)
-            if file_size == 0:
-                raise Exception("공개 URL에서 다운로드된 파일이 비어있습니다")
-
-            print(f"[{document_id}] 공개 URL로 다운로드 성공: {temp_file_path} ({file_size} bytes)")
-            return temp_file_path
-
-        except Exception as fallback_error:
-            print(f"[{document_id}] 공개 URL 다운로드도 실패: {fallback_error}")
-            raise Exception(f"파일 다운로드 실패 - Storage API: {e}, 공개 URL: {fallback_error}")
+    return PDFFileManager.get_or_download(document_id, file_url)
 
 
 async def process_single_document(document_id: str, filename: str, file_url: str) -> Dict:
     """
-    단일 PDF 문서를 다운로드, 청크 분할, 임베딩, ChromaDB 저장까지 처리합니다.
-    위치 정보를 포함하여 처리합니다.
+    🔥 개선된 단일 PDF 문서 처리 (파일 생명주기 관리 개선)
     """
-    temp_pdf_path = None
+    pdf_file_path = None
 
     try:
         print(f"[{document_id}] 문서 처리 시작: {filename}")
 
-        # 1. Supabase Storage에서 PDF 다운로드
-        print(f"[{document_id}] 파일 다운로드 시작: {file_url}")
-        temp_pdf_path = await download_pdf_from_supabase(file_url, document_id)
+        # 1. PDF 파일 획득 (캐시 우선 활용)
+        print(f"[{document_id}] PDF 파일 획득 시작: {file_url}")
+        pdf_file_path = await download_pdf_from_supabase(file_url, document_id)
 
-        # 2. PDF 위치 정보 포함 벡터화 처리
+        # 2. 파일 유효성 검증
+        if not os.path.exists(pdf_file_path):
+            raise Exception(f"PDF 파일을 찾을 수 없습니다: {pdf_file_path}")
+
+        file_size = os.path.getsize(pdf_file_path)
+        if file_size == 0:
+            raise Exception("PDF 파일이 비어있습니다")
+
+        print(f"[{document_id}] PDF 파일 확인됨: {pdf_file_path} ({file_size} bytes)")
+
+        # 3. PDF 위치 정보 포함 벡터화 처리
         print(f"[{document_id}] PDF 위치 정보 포함 벡터화 처리 시작...")
-        vectorization_result = process_pdf_file_with_locations(temp_pdf_path)
+        vectorization_result = process_pdf_file_with_locations(pdf_file_path)
 
         if vectorization_result["status"] != "success":
             raise Exception(f"PDF 벡터화 처리 실패: {vectorization_result.get('error', 'Unknown error')}")
@@ -119,14 +162,14 @@ async def process_single_document(document_id: str, filename: str, file_url: str
         if not chunks:
             raise Exception("PDF에서 유효한 텍스트 청크를 생성할 수 없습니다")
 
-        # 3. 임베딩 생성
+        # 4. 임베딩 생성
         print(f"[{document_id}] 임베딩 생성 중...")
         embeddings = get_embeddings(chunks)
 
         if len(chunks) != len(embeddings):
             raise Exception(f"청크 수({len(chunks)})와 임베딩 수({len(embeddings)})가 일치하지 않습니다")
 
-        # 4. ChromaDB에 청크와 임베딩 저장 (위치 정보 포함)
+        # 5. ChromaDB에 청크와 임베딩 저장 (위치 정보 포함)
         print(f"[{document_id}] ChromaDB에 {len(chunks)}개 임베딩 저장 중...")
 
         ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
@@ -141,7 +184,8 @@ async def process_single_document(document_id: str, filename: str, file_url: str
                 "end_page": chunk_location["end_page"],
                 "chunk_hash": chunk_location["chunk_hash"],
                 "char_count": chunk_location["char_count"],
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "pdf_file_path": pdf_file_path  # 🔥 파일 경로 저장
             }
             metadatas.append(metadata)
 
@@ -172,7 +216,7 @@ async def process_single_document(document_id: str, filename: str, file_url: str
         except Exception as chroma_error:
             raise Exception(f"ChromaDB 저장 실패: {chroma_error}")
 
-        # 5. Supabase DB의 문서 상태를 'completed'로 업데이트
+        # 6. Supabase DB의 문서 상태를 'completed'로 업데이트
         print(f"[{document_id}] Supabase DB 상태 'completed'로 업데이트 중...")
 
         try:
@@ -192,6 +236,7 @@ async def process_single_document(document_id: str, filename: str, file_url: str
             "message": f"문서 '{filename}' 처리 완료. {len(chunks)}개 청크 저장됨.",
             "chunk_count": len(chunks),
             "document_id": document_id,
+            "pdf_file_path": pdf_file_path,  # 🔥 파일 경로 반환 (하이라이트용)
             "location_info": {
                 "total_pages": vectorization_result.get("text_extraction", {}).get("total_pages", 0),
                 "chunks_with_pages": chunks_with_locations
@@ -222,57 +267,86 @@ async def process_single_document(document_id: str, filename: str, file_url: str
             "document_id": document_id
         }
 
-    finally:
-        # 임시 다운로드 파일 삭제
-        if temp_pdf_path and os.path.exists(temp_pdf_path):
-            try:
-                os.remove(temp_pdf_path)
-                print(f"[{document_id}] 임시 파일 삭제 완료: {temp_pdf_path}")
-            except Exception as cleanup_error:
-                print(f"[{document_id}] ⚠️ 임시 파일 삭제 실패: {cleanup_error}")
+    # 🔥 임시 파일 삭제하지 않음 - 캐시로 유지하여 후속 작업에서 활용
 
 
-def get_document_status(document_id: str) -> Dict:
+def get_document_pdf_path(document_id: str) -> str:
     """
-    특정 문서의 처리 상태를 조회합니다.
+    🔥 문서 ID로 PDF 파일 경로 조회 (캐시 우선)
     """
+    # 1. 캐시에서 확인
+    if PDFFileManager.is_cached(document_id):
+        return PDFFileManager.get_cached_path(document_id)
+
+    # 2. ChromaDB 메타데이터에서 확인
     try:
-        response = supabase.from_('documents').select('*').eq('id', document_id).execute()
+        results = vector_collection.get(
+            where={"document_id": document_id},
+            limit=1
+        )
 
+        if results["metadatas"] and results["metadatas"][0]:
+            stored_path = results["metadatas"][0].get("pdf_file_path")
+            if stored_path and os.path.exists(stored_path):
+                return stored_path
+    except Exception as e:
+        print(f"ChromaDB에서 파일 경로 조회 실패: {e}")
+
+    # 3. Supabase에서 URL 조회 후 다운로드
+    try:
+        response = supabase.from_('documents').select('url').eq('id', document_id).execute()
         if response.data:
-            return {"status": "success", "data": response.data[0]}
-        else:
-            return {"status": "not_found", "message": "문서를 찾을 수 없습니다"}
-
+            file_url = response.data[0]['url']
+            return PDFFileManager.get_or_download(document_id, file_url)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        print(f"Supabase에서 파일 URL 조회 실패: {e}")
+
+    raise Exception(f"문서 {document_id}의 PDF 파일을 찾을 수 없습니다")
 
 
-def get_documents_by_status(status: str = None, limit: int = 10) -> Dict:
+def find_chunk_exact_location(document_id: str, chunk_text: str, file_url: str = None) -> Dict:
     """
-    상태별로 문서 목록을 조회합니다.
+    🔥 개선된 청크 위치 찾기 (캐시된 파일 활용)
     """
     try:
-        query = supabase.from_('documents').select('*').order('created_at', desc=True).limit(limit)
+        # PDF 파일 경로 획득
+        pdf_file_path = get_document_pdf_path(document_id)
 
-        if status:
-            query = query.eq('status', status)
+        # 텍스트 위치 찾기
+        search_text = chunk_text[:200]  # 청크의 첫 200자로 검색
+        locations = find_text_locations(pdf_file_path, search_text)
 
-        response = query.execute()
-
-        return {
-            "status": "success",
-            "data": response.data,
-            "count": len(response.data)
-        }
+        if locations:
+            primary_location = locations[0]
+            return {
+                "status": "success",
+                "page_number": primary_location.page_number,
+                "bbox": {
+                    "x0": primary_location.bbox[0],
+                    "y0": primary_location.bbox[1],
+                    "x1": primary_location.bbox[2],
+                    "y1": primary_location.bbox[3]
+                },
+                "context": primary_location.context,
+                "total_matches": len(locations),
+                "pdf_file_path": pdf_file_path
+            }
+        else:
+            return {
+                "status": "not_found",
+                "message": "해당 텍스트를 PDF에서 찾을 수 없습니다."
+            }
 
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 def search_similar_documents_with_pages(query_text: str, limit: int = 5, document_ids: List[str] = None) -> Dict:
     """
-    ChromaDB에서 유사한 문서 청크를 검색합니다. (페이지 정보 포함)
+    🔥 개선된 문서 검색 (PDF 파일 경로 포함)
     """
     try:
         # 쿼리 텍스트를 임베딩으로 변환
@@ -307,6 +381,12 @@ def search_similar_documents_with_pages(query_text: str, limit: int = 5, documen
 
         search_results = []
         for doc, metadata, distance in zip(documents, metadatas, distances):
+            # 🔥 PDF 파일 경로 확인
+            try:
+                pdf_path = get_document_pdf_path(metadata.get("document_id", ""))
+            except:
+                pdf_path = None
+
             result = {
                 "document_id": metadata.get("document_id", ""),
                 "filename": metadata.get("filename", "Unknown"),
@@ -318,7 +398,8 @@ def search_similar_documents_with_pages(query_text: str, limit: int = 5, documen
                 "end_page": metadata.get("end_page", 1),
                 "chunk_hash": metadata.get("chunk_hash", ""),
                 "char_count": metadata.get("char_count", len(doc)),
-                "created_at": metadata.get("created_at", "")
+                "created_at": metadata.get("created_at", ""),
+                "pdf_file_path": pdf_path  # 🔥 PDF 파일 경로 추가
             }
             search_results.append(result)
 
@@ -333,74 +414,78 @@ def search_similar_documents_with_pages(query_text: str, limit: int = 5, documen
         return {"status": "error", "message": str(e)}
 
 
-def find_chunk_exact_location(document_id: str, chunk_text: str, file_url: str) -> Dict:
-    """
-    특정 청크의 정확한 PDF 위치를 찾습니다.
-    """
-    temp_file_path = None
+# 🔥 나머지 함수들은 기존과 동일하게 유지...
+def get_document_status(document_id: str) -> Dict:
+    """특정 문서의 처리 상태를 조회합니다."""
     try:
-        # PDF 다운로드
-        import requests
-        response = requests.get(file_url)
-        response.raise_for_status()
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-            tmp_file.write(response.content)
-            temp_file_path = tmp_file.name
-
-        # 텍스트 위치 찾기
-        search_text = chunk_text[:200]  # 청크의 첫 200자로 검색
-        locations = find_text_locations(temp_file_path, search_text)
-
-        if locations:
-            primary_location = locations[0]
-            return {
-                "status": "success",
-                "page_number": primary_location.page_number,
-                "bbox": {
-                    "x0": primary_location.bbox[0],
-                    "y0": primary_location.bbox[1],
-                    "x1": primary_location.bbox[2],
-                    "y1": primary_location.bbox[3]
-                },
-                "context": primary_location.context,
-                "total_matches": len(locations)
-            }
+        response = supabase.from_('documents').select('*').eq('id', document_id).execute()
+        if response.data:
+            return {"status": "success", "data": response.data[0]}
         else:
-            return {
-                "status": "not_found",
-                "message": "해당 텍스트를 PDF에서 찾을 수 없습니다."
-            }
-
+            return {"status": "not_found", "message": "문서를 찾을 수 없습니다"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def get_documents_by_status(status: str = None, limit: int = 10) -> Dict:
+    """상태별로 문서 목록을 조회합니다."""
+    try:
+        query = supabase.from_('documents').select('*').order('created_at', desc=True).limit(limit)
+        if status:
+            query = query.eq('status', status)
+        response = query.execute()
         return {
-            "status": "error",
-            "message": str(e)
+            "status": "success",
+            "data": response.data,
+            "count": len(response.data)
         }
-    finally:
-        # 임시 파일 정리
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
-def get_document_page_info(document_id: str) -> Dict:
+def delete_document_vectors(document_id: str) -> Dict:
     """
-    문서의 페이지 정보를 조회합니다.
+    🔥 개선된 문서 벡터 삭제 (캐시도 함께 정리)
     """
     try:
-        # ChromaDB에서 해당 문서의 모든 청크 조회
-        results = vector_collection.get(
-            where={"document_id": document_id}
-        )
+        # ChromaDB에서 벡터 데이터 삭제
+        results = vector_collection.get(where={"document_id": document_id})
 
         if not results["ids"]:
             return {
                 "status": "not_found",
-                "message": "문서를 찾을 수 없습니다."
+                "message": "삭제할 벡터 데이터가 없습니다."
             }
 
-        # 페이지 정보 수집
+        vector_collection.delete(ids=results["ids"])
+
+        # 캐시 파일도 삭제
+        PDFFileManager.cleanup_cache(document_id)
+
+        return {
+            "status": "success",
+            "message": f"{len(results['ids'])}개의 벡터 데이터가 삭제되었습니다.",
+            "deleted_count": len(results["ids"])
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# 하위 호환성을 위한 기존 함수들
+def search_similar_documents(query_text: str, limit: int = 5) -> Dict:
+    """기존 검색 함수 (하위 호환성)"""
+    return search_similar_documents_with_pages(query_text, limit)
+
+
+def get_document_page_info(document_id: str) -> Dict:
+    """문서의 페이지 정보를 조회합니다."""
+    try:
+        results = vector_collection.get(where={"document_id": document_id})
+
+        if not results["ids"]:
+            return {"status": "not_found", "message": "문서를 찾을 수 없습니다."}
+
         page_info = {}
         total_chunks = len(results["ids"])
 
@@ -432,18 +517,12 @@ def get_document_page_info(document_id: str) -> Dict:
         }
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        return {"status": "error", "message": str(e)}
 
 
 async def reprocess_failed_documents() -> Dict:
-    """
-    실패한 문서들을 재처리합니다.
-    """
+    """실패한 문서들을 재처리합니다."""
     try:
-        # 실패한 문서 조회
         response = supabase.from_('documents').select('*').eq('status', 'failed').execute()
         failed_docs = response.data
 
@@ -456,13 +535,11 @@ async def reprocess_failed_documents() -> Dict:
         for doc in failed_docs:
             print(f"재처리 시작: {doc['filename']} (ID: {doc['id']})")
 
-            # 상태를 pending으로 변경
             supabase.from_('documents').update({
                 'status': 'pending',
                 'processed_at': None
             }).eq('id', doc['id']).execute()
 
-            # 재처리
             result = await process_single_document(doc['id'], doc['filename'], doc['url'])
             results.append({
                 "document_id": doc['id'],
@@ -486,103 +563,29 @@ async def reprocess_failed_documents() -> Dict:
 
 
 def get_chunk_by_hash(chunk_hash: str) -> Dict:
-    """
-    청크 해시로 특정 청크 정보를 조회합니다.
-    """
+    """청크 해시로 특정 청크 정보를 조회합니다."""
     try:
-        results = vector_collection.get(
-            where={"chunk_hash": chunk_hash}
-        )
+        results = vector_collection.get(where={"chunk_hash": chunk_hash})
 
         if not results["ids"]:
-            return {
-                "status": "not_found",
-                "message": "해당 청크를 찾을 수 없습니다."
-            }
+            return {"status": "not_found", "message": "해당 청크를 찾을 수 없습니다."}
 
-        # 첫 번째 결과 반환
         chunk_data = {
             "chunk_id": results["ids"][0],
             "document": results["documents"][0],
             "metadata": results["metadatas"][0]
         }
 
-        return {
-            "status": "success",
-            "chunk": chunk_data
-        }
+        return {"status": "success", "chunk": chunk_data}
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
-
-
-def delete_document_vectors(document_id: str) -> Dict:
-    """
-    특정 문서의 모든 벡터 데이터를 삭제합니다.
-    """
-    try:
-        # 해당 문서의 모든 벡터 데이터 조회
-        results = vector_collection.get(
-            where={"document_id": document_id}
-        )
-
-        if not results["ids"]:
-            return {
-                "status": "not_found",
-                "message": "삭제할 벡터 데이터가 없습니다."
-            }
-
-        # 벡터 데이터 삭제
-        vector_collection.delete(ids=results["ids"])
-
-        return {
-            "status": "success",
-            "message": f"{len(results['ids'])}개의 벡터 데이터가 삭제되었습니다.",
-            "deleted_count": len(results["ids"])
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
-
-
-# 기존 함수도 유지 (하위 호환성)
-def search_similar_documents(query_text: str, limit: int = 5) -> Dict:
-    """
-    ChromaDB에서 유사한 문서 청크를 검색합니다. (기존 버전)
-    """
-    return search_similar_documents_with_pages(query_text, limit)
+        return {"status": "error", "message": str(e)}
 
 
 if __name__ == "__main__":
-    # 테스트용 코드
-    import asyncio
-
-
-    async def test_processing():
-        # 예시: pending 상태 문서 처리 테스트
-        try:
-            response = supabase.from_('documents').select('*').eq('status', 'pending').limit(1).execute()
-            if response.data:
-                doc = response.data[0]
-                result = await process_single_document(doc['id'], doc['filename'], doc['url'])
-                print(f"테스트 결과: {result}")
-            else:
-                print("테스트할 pending 상태 문서가 없습니다.")
-
-            # 검색 테스트
-            search_result = search_similar_documents_with_pages("대출 조건", limit=3)
-            print(f"검색 테스트 결과: {search_result}")
-
-        except Exception as e:
-            print(f"테스트 중 오류: {e}")
-
-
-    # asyncio.run(test_processing())
-    print("Enhanced Document processor 모듈이 준비되었습니다.")
-    print("✨ 페이지 위치 정보 및 하이라이트 기능 지원")
+    print("✨ Enhanced Document processor 모듈이 준비되었습니다.")
+    print("🔥 개선사항:")
+    print("  - PDF 파일 캐시 관리")
+    print("  - 파일 생명주기 최적화")
+    print("  - 경로 불일치 문제 해결")
+    print("  - 페이지 위치 정보 및 하이라이트 기능 지원")

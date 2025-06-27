@@ -26,9 +26,18 @@ app.include_router(documents.router, prefix="/api", tags=["documents"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 
 # CORS 설정 (React 앱에서 API 호출을 위해)
+# CORS 설정 (더 관대하게 설정)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # Vite 개발 서버
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+        "*"  # 개발 환경에서만 사용
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,22 +154,34 @@ async def upload_pdf(
         except Exception:
             supabase_file_url = f"{supabase.url}/storage/v1/object/public/{bucket_name}/{unique_filename}"
 
-        # DB에 메타데이터 저장
+        # DB에 메타데이터 저장 (현재 테이블 스키마에 맞게 수정)
         document_id = str(uuid.uuid4())
 
         try:
-            db_response = supabase.from_('documents').insert([
-                {
-                    'id': document_id,
-                    'filename': file.filename,
-                    'url': supabase_file_url,
-                    'status': 'pending',
-                    'file_size': file_size,
-                    'created_at': datetime.now().isoformat()
-                }
-            ]).execute()
+            # 현재 테이블 스키마에 맞춰 저장 (file_size 제외)
+            db_response = supabase.from_('documents').insert({
+                'id': document_id,
+                'filename': file.filename,
+                'url': supabase_file_url,
+                'status': 'pending'
+                # created_at은 DEFAULT로 자동 설정됨
+                # file_size는 테이블에 컬럼이 없으므로 제외
+            }).execute()
+
             print(f"✅ DB 저장 성공: {document_id}")
+            print(f"DB Response: {db_response}")
+
         except Exception as db_error:
+            print(f"❌ DB 저장 실패: {db_error}")
+            print(f"DB Error Details: {type(db_error).__name__}: {str(db_error)}")
+
+            # Storage에서 업로드된 파일 삭제 (정리)
+            try:
+                supabase.storage.from_(bucket_name).remove([unique_filename])
+                print(f"🗑️ Storage 파일 정리 완료: {unique_filename}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Storage 파일 정리 실패: {cleanup_error}")
+
             raise HTTPException(status_code=500, detail=f"메타데이터 저장 실패: {str(db_error)}")
 
         # 자동 처리 옵션이 켜져있으면 백그라운드에서 처리
@@ -187,6 +208,33 @@ async def upload_pdf(
         print(f"❌ 업로드 오류: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"업로드 처리 중 오류: {str(e)}")
+
+
+# 새로 추가: 업로드 상태 확인 API
+@app.get("/upload/status/{document_id}")
+async def get_upload_status(document_id: str):
+    """
+    업로드 상태 확인
+    """
+    try:
+        response = supabase.from_('documents').select('*').eq('id', document_id).execute()
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+
+        doc = response.data[0]
+        return {
+            "status": doc['status'],
+            "document_id": document_id,
+            "filename": doc['filename'],
+            "error_message": doc.get('error_message')  # 테이블에 없으면 None 반환
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ 상태 확인 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/documents", response_model=DocumentListResponse)
@@ -225,6 +273,7 @@ async def get_documents(
 
     except Exception as e:
         print(f"❌ 문서 목록 조회 오류: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

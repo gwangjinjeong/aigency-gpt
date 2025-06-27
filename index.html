@@ -1,24 +1,210 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>loan-whisper-korea</title>
-    <meta name="description" content="Lovable Generated Project" />
-    <meta name="author" content="Lovable" />
+    <title>DocuChat AI - PDF 문서와 대화하는 AI</title>
+    <meta name="description" content="AI 기반 PDF 문서 질의응답 시스템" />
+    <meta name="author" content="DocuChat AI" />
 
-    <meta property="og:title" content="loan-whisper-korea" />
-    <meta property="og:description" content="Lovable Generated Project" />
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="DocuChat AI - PDF 문서와 대화하는 AI" />
+    <meta property="og:description" content="RAG와 벡터 검색 기술로 PDF 문서를 정확히 이해하고 답변하는 AI 서비스" />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta property="og:image" content="/placeholder.svg" />
 
+    <!-- Twitter Card Meta Tags -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@lovable_dev" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta name="twitter:title" content="DocuChat AI" />
+    <meta name="twitter:description" content="PDF 문서와 대화하는 AI 서비스" />
+    <meta name="twitter:image" content="/placeholder.svg" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/placeholder.svg" />
+
+    <!-- 기본 로딩 스타일 -->
+    <style>
+      /* 로딩 화면 스타일 */
+      #loading-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 50%, #f0f4ff 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e5e7eb;
+        border-top: 4px solid #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+      }
+
+      .loading-logo {
+        width: 64px;
+        height: 64px;
+        background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+      }
+
+      .loading-text {
+        color: #374151;
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .loading-subtitle {
+        color: #6b7280;
+        font-size: 14px;
+        text-align: center;
+      }
+
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      /* 에러 화면 숨기기 */
+      .error-hidden {
+        display: none !important;
+      }
+
+      /* 기본 body 스타일 */
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+        background-color: #f9fafb;
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+    </style>
   </head>
 
   <body>
+    <!-- 로딩 화면 -->
+    <div id="loading-screen">
+      <div class="loading-logo">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <polyline points="14,2 14,8 20,8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="13" x2="8" y2="13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="17" x2="8" y2="17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <polyline points="10,9 9,9 8,9" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="loading-spinner"></div>
+      <div class="loading-text">DocuChat AI</div>
+      <div class="loading-subtitle">PDF 문서와 대화하는 AI 서비스를 준비하고 있습니다...</div>
+    </div>
+
+    <!-- React 앱이 마운트될 컨테이너 -->
     <div id="root"></div>
+
+    <!-- 자바스크립트 에러 처리 -->
+    <script>
+      // 로딩 화면 제거 함수
+      function hideLoadingScreen() {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen) {
+          loadingScreen.style.opacity = '0';
+          loadingScreen.style.transition = 'opacity 0.5s ease-out';
+          setTimeout(() => {
+            loadingScreen.remove();
+          }, 500);
+        }
+      }
+
+      // 에러 처리
+      window.addEventListener('error', function(e) {
+        console.error('앱 로딩 중 오류:', e.error);
+        hideLoadingScreen();
+
+        const root = document.getElementById('root');
+        if (root && !root.innerHTML.trim()) {
+          root.innerHTML = `
+            <div style="
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              text-align: center;
+              padding: 20px;
+              background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 50%, #f0f4ff 100%);
+            ">
+              <div style="max-width: 400px;">
+                <div style="
+                  width: 64px;
+                  height: 64px;
+                  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                  border-radius: 12px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  margin: 0 auto 20px;
+                  color: white;
+                  font-size: 24px;
+                ">!</div>
+                <h1 style="color: #374151; margin-bottom: 12px;">앱 로딩 실패</h1>
+                <p style="color: #6b7280; margin-bottom: 20px;">
+                  앱을 불러오는 중 문제가 발생했습니다.<br/>
+                  잠시 후 다시 시도해주세요.
+                </p>
+                <button
+                  onclick="window.location.reload()"
+                  style="
+                    background: #3b82f6;
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-weight: 500;
+                  "
+                >
+                  페이지 새로고침
+                </button>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      // React 앱이 성공적으로 로드되면 로딩 화면 숨기기
+      // (React 컴포넌트가 마운트된 후 호출됨)
+      window.addEventListener('DOMContentLoaded', function() {
+        // 5초 후에도 로딩 화면이 있으면 제거 (타임아웃)
+        setTimeout(function() {
+          const loadingScreen = document.getElementById('loading-screen');
+          if (loadingScreen) {
+            console.warn('앱 로딩이 예상보다 오래 걸리고 있습니다.');
+            hideLoadingScreen();
+          }
+        }, 5000);
+      });
+    </script>
+
+    <!-- React 앱 엔트리 포인트 -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

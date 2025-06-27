@@ -5,12 +5,15 @@ import openai
 from typing import List, Dict
 from dotenv import load_dotenv
 
-load_dotenv() # .env 파일 로드
+# backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+# env_path = os.path.join(backend_dir, '.env')
+load_dotenv()
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # OpenAI API 키 설정
 from openai import OpenAI
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-if not openai.api_key:
+if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set.")
 
 def get_text_chunks(filepath: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:

@@ -18,28 +18,38 @@ import {
   Loader2
 } from 'lucide-react';
 
+interface BoundingBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface ChatSource {
+  document_id: string;
+  filename: string;
+  page_number: number;
+  bbox?: BoundingBox;
+  content_preview: string;
+  relevance_score: number;
+}
+
 interface ChatMessage {
   id: string;
   type: 'user' | 'assistant';
   content: string;
   timestamp: string;
-  sources?: Array<{
-    document_id: string;
-    filename: string;
-    page_number: number;
-    bbox?: any;
-    content_preview: string;
-    relevance_score: number;
-  }>;
+  sources?: ChatSource[];
   processing_time?: number;
 }
 
 interface EnhancedChatInterfaceProps {
-  onSourceClick?: (documentId: string, pageNumber: number, highlightText: string) => void;
+  onSourceClick?: (documentId: string, pageNumber: number, highlightText?: string) => void;
   onMessageSent?: () => void;
 }
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+// Vite 환경변수 사용
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({
   onSourceClick,
@@ -128,13 +138,13 @@ const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({
 
         setMessages(prev => [...prev, assistantMessage]);
 
-        // 첫 번째 소스가 있으면 자동으로 해당 페이지로 이동
+        // 🔥 첫 번째 소스가 있으면 자동으로 해당 페이지로 이동 (highlightText 없이)
         if (data.sources && data.sources.length > 0 && onSourceClick) {
           const firstSource = data.sources[0];
           onSourceClick(
             firstSource.document_id,
-            firstSource.page_number,
-            firstSource.content_preview.slice(0, 100)
+            firstSource.page_number
+            // 🔥 highlightText 제거 - 자동 하이라이트하지 않음
           );
         }
       } else {
@@ -154,14 +164,43 @@ const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({
     }
   };
 
-  const handleSourceClick = (source: any) => {
+  const handleSourceClick = (source: ChatSource) => {
     if (onSourceClick) {
+      // 🔥 페이지 이동만 (하이라이트 없이)
+      onSourceClick(
+        source.document_id,
+        source.page_number
+      );
+    }
+  };
+
+  const handleHighlightClick = (source: ChatSource, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onSourceClick) {
+      // 🔥 하이라이트 기능: 키워드만 추출하여 전달
+      const keywords = extractKeywords(source.content_preview);
       onSourceClick(
         source.document_id,
         source.page_number,
-        source.content_preview
+        keywords
       );
     }
+  };
+
+  // 🔥 content_preview에서 의미있는 키워드만 추출하는 함수
+  const extractKeywords = (content: string): string => {
+    // 간단한 키워드 추출 로직 (실제로는 더 정교하게 구현 가능)
+    const words = content.split(/\s+/);
+
+    // 의미있는 단어들 필터링 (숫자, 한글, 영문 포함)
+    const meaningfulWords = words.filter(word =>
+      word.length >= 2 &&
+      /[가-힣a-zA-Z0-9]/.test(word) &&
+      !['은', '는', '이', '가', '을', '를', '의', '에', '와', '과', '로', '으로'].includes(word)
+    );
+
+    // 처음 2-3개 단어만 선택
+    return meaningfulWords.slice(0, 3).join(' ').slice(0, 50);
   };
 
   const handleCopyMessage = (content: string) => {
@@ -292,11 +331,7 @@ const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({
                                   size="sm"
                                   variant="ghost"
                                   className="h-6 px-2 text-xs text-yellow-600 hover:bg-yellow-50"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    // 하이라이트 요청
-                                    handleSourceClick(source);
-                                  }}
+                                  onClick={(e) => handleHighlightClick(source, e)}
                                 >
                                   <Highlighter className="w-3 h-3 mr-1" />
                                   하이라이트

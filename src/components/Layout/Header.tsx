@@ -1,13 +1,10 @@
-
 import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, FileText, MessageCircle } from 'lucide-react';
+import { FileText, MessageCircle } from 'lucide-react';
 
 const Header = () => {
   const { t } = useLanguage();
-  const { user, logout } = useAuth();
 
   return (
     <header className="bg-white border-b border-gray-200 shadow-sm">
@@ -18,37 +15,40 @@ const Header = () => {
               <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg flex items-center justify-center">
                 <FileText className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-bold text-gray-900">BankBot</span>
+              <span className="text-xl font-bold text-gray-900">DocuChat AI</span>
             </div>
             
-            {user && (
-              <nav className="flex space-x-4 ml-8">
-                <a
-                  href="/chat"
-                  className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>{t('nav.chat')}</span>
-                </a>
-              </nav>
-            )}
+            <nav className="flex space-x-4 ml-8">
+              <a
+                href="/chat"
+                className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>{t('nav.chat')}</span>
+              </a>
+              <a
+                href="/admin"
+                className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              >
+                <span>{t('nav.admin')}</span>
+              </a>
+            </nav>
           </div>
 
           <div className="flex items-center space-x-4">
-            {user && (
-              <div className="flex items-center space-x-3">
-                <span className="text-sm text-gray-700">{user.name}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={logout}
-                  className="flex items-center space-x-2"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>{t('nav.logout')}</span>
-                </Button>
-              </div>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.location.href = '/login'}
+            >
+              {t('nav.login')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => window.location.href = '/chat'}
+            >
+              {t('nav.chat')}
+            </Button>
           </div>
         </div>
       </div>
