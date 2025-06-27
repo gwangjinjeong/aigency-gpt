@@ -13,12 +13,17 @@ from datetime import datetime
 from typing import List, Optional
 from postgrest.exceptions import APIError
 import traceback
+from app.api import upload, documents, chat
 
 app = FastAPI(
     title="PDF Vectorization API",
     description="PDF 문서 업로드, 처리 및 벡터화 API",
     version="1.0.0"
 )
+
+app.include_router(upload.router, prefix="/api", tags=["upload"])
+app.include_router(documents.router, prefix="/api", tags=["documents"])
+app.include_router(chat.router, prefix="/api", tags=["chat"])
 
 # CORS 설정 (React 앱에서 API 호출을 위해)
 app.add_middleware(

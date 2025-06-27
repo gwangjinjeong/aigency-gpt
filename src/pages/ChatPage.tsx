@@ -1,58 +1,91 @@
-
-import React from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { useLanguage } from '@/contexts/LanguageContext';
+import React, { useState } from 'react';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import EnhancedChatInterface from '@/components/Chat/EnhancedChatInterface';
+import EnhancedPDFViewer from '@/components/Chat/EnhancedPDFViewer';
 import Header from '@/components/Layout/Header';
-import ChatInterface from '@/components/Chat/ChatInterface';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { FileText, MessageCircle } from 'lucide-react';
 
-const ChatPage = () => {
-  const { user } = useAuth();
-  const { t } = useLanguage();
+interface CurrentDocument {
+  id: string;
+  filename: string;
+  url: string;
+  pageNumber?: number;
+  highlightText?: string;
+  searchLocations?: any[];
+}
 
-  if (!user) {
-    return <div>Please log in</div>;
-  }
+const ChatPage: React.FC = () => {
+  const [currentDocument, setCurrentDocument] = useState<CurrentDocument | null>(null);
+  const [showPDFViewer, setShowPDFViewer] = useState(false);
+
+  const handleSourceClick = (documentId: string, pageNumber: number, highlightText: string) => {
+    // 문서 정보를 설정하고 PDF 뷰어 표시
+    setCurrentDocument({
+      id: documentId,
+      filename: `Document ${documentId}`, // 실제로는 API에서 파일명을 가져와야 함
+      url: '', // 실제 PDF URL (API에서 가져와야 함)
+      pageNumber,
+      highlightText
+    });
+    setShowPDFViewer(true);
+  };
+
+  const handleMessageSent = () => {
+    // 메시지 전송 시 PDF 뷰어 표시 (답변을 기다리기 위해)
+    setShowPDFViewer(true);
+  };
+
+  const handlePageChange = (pageNumber: number) => {
+    if (currentDocument) {
+      setCurrentDocument({
+        ...currentDocument,
+        pageNumber
+      });
+    }
+  };
+
+  const handleHighlightRequest = (text: string) => {
+    if (currentDocument) {
+      setCurrentDocument({
+        ...currentDocument,
+        highlightText: text
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-200px)]">
-          {/* Chat Interface */}
-          <div className="lg:col-span-2">
-            <Card className="h-full">
-              <CardHeader className="pb-4">
-                <CardTitle className="flex items-center space-x-2">
-                  <MessageCircle className="w-5 h-5 text-blue-600" />
-                  <span>{t('chat.title')}</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 h-[calc(100%-80px)]">
-                <ChatInterface />
-              </CardContent>
-            </Card>
+      
+      <div className="h-[calc(100vh-4rem)]">
+        {showPDFViewer ? (
+          // 분할된 화면: 채팅 + PDF 뷰어
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={45} minSize={30}>
+              <EnhancedChatInterface
+                onSourceClick={handleSourceClick}
+                onMessageSent={handleMessageSent}
+              />
+            </ResizablePanel>
+            
+            <ResizableHandle withHandle />
+            
+            <ResizablePanel defaultSize={55} minSize={30}>
+              <EnhancedPDFViewer
+                document={currentDocument}
+                onPageChange={handlePageChange}
+                onHighlightRequest={handleHighlightRequest}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : (
+          // 전체 화면: 채팅만
+          <div className="h-full">
+            <EnhancedChatInterface
+              onSourceClick={handleSourceClick}
+              onMessageSent={handleMessageSent}
+            />
           </div>
-
-          {/* Document Viewer */}
-          <div className="lg:col-span-1">
-            <Card className="h-full">
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <FileText className="w-5 h-5 text-blue-600" />
-                  <span>{t('chat.references')}</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex items-center justify-center h-[calc(100%-80px)] text-gray-500">
-                <div className="text-center">
-                  <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p>Reference documents will appear here</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 load_dotenv() # .env 파일 로드
 
 # OpenAI API 키 설정
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+from openai import OpenAI
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 if not openai.api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set.")
 
@@ -35,8 +36,8 @@ def get_embeddings(texts: List[str]) -> List[List[float]]:
     """
     if not texts:
         return []
-    response = openai.embeddings.create(
-        model="text-embedding-ada-002", # OpenAI 임베딩 모델
+    response = client.embeddings.create(
+        model="text-embedding-ada-002",
         input=texts
     )
     return [data.embedding for data in response.data]

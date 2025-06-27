@@ -17,10 +17,56 @@ import {
   AlertTriangle,
   RefreshCw
 } from 'lucide-react';
-import { Document } from '@/types';
 
 // API 설정
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
+// 정확한 타입 정의
+interface ApiDocument {
+  id: string;
+  filename: string;
+  created_at: string;
+  chunk_count?: number;
+  file_size?: number;
+  language?: 'ko' | 'en';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  processed_at?: string;
+  error_message?: string;
+}
+
+interface Document {
+  id: string;
+  filename: string;
+  uploadTime: string;
+  chunks: number;
+  size: string | number;
+  language: 'ko' | 'en';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  processedAt?: string;
+  errorMessage?: string;
+}
+
+interface ApiResponse<T> {
+  status: 'success' | 'error';
+  data: T;
+  message?: string;
+}
+
+interface UploadResponse {
+  status: string;
+  document_id: string;
+  filename: string;
+  file_size: number;
+  processing: boolean;
+  message: string;
+}
+
+interface StatusResponse {
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  document_id: string;
+  filename: string;
+  error_message?: string;
+}
 
 interface UploadProgress {
   stage: 'uploading' | 'processing' | 'completed' | 'failed';
@@ -41,10 +87,10 @@ const DocumentUpload = () => {
     try {
       setLoading(true);
       const response = await fetch(`${API_BASE_URL}/documents?limit=50`);
-      const data = await response.json();
-      
+      const data: ApiResponse<ApiDocument[]> = await response.json();
+
       if (data.status === 'success') {
-        const formattedDocs = data.data.map((doc: any) => ({
+        const formattedDocs: Document[] = data.data.map((doc: ApiDocument) => ({
           id: doc.id,
           filename: doc.filename,
           uploadTime: new Date(doc.created_at).toLocaleString('ko-KR'),
@@ -77,12 +123,12 @@ const DocumentUpload = () => {
         setError('PDF 파일만 업로드 가능합니다.');
         return;
       }
-      
+
       if (file.size > 50 * 1024 * 1024) { // 50MB 제한
         setError('파일 크기는 50MB 이하여야 합니다.');
         return;
       }
-      
+
       setSelectedFile(file);
       setError(null);
     }
@@ -90,7 +136,7 @@ const DocumentUpload = () => {
 
   const handleUpload = async () => {
     if (!selectedFile) return;
-    
+
     setError(null);
     setUploadProgress({
       stage: 'uploading',
@@ -102,8 +148,8 @@ const DocumentUpload = () => {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      // 파일 업로드 (실제 구현 시 FastAPI 엔드포인트에 맞게 수정)
-      const uploadResponse = await fetch(`${API_BASE_URL}/upload-pdf`, {
+      // 파일 업로드
+      const uploadResponse = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -112,7 +158,7 @@ const DocumentUpload = () => {
         throw new Error('파일 업로드에 실패했습니다.');
       }
 
-      const uploadResult = await uploadResponse.json();
+      const uploadResult: UploadResponse = await uploadResponse.json();
       const documentId = uploadResult.document_id;
 
       // 업로드 완료, 처리 시작
@@ -129,8 +175,8 @@ const DocumentUpload = () => {
 
         const poll = async () => {
           try {
-            const statusResponse = await fetch(`${API_BASE_URL}/documents/${documentId}/status`);
-            const statusData = await statusResponse.json();
+            const statusResponse = await fetch(`${API_BASE_URL}/upload/status/${documentId}`);
+            const statusData: StatusResponse = await statusResponse.json();
 
             if (statusData.status === 'completed') {
               setUploadProgress({
@@ -138,16 +184,16 @@ const DocumentUpload = () => {
                 message: '처리가 완료되었습니다!',
                 progress: 100
               });
-              
+
               // 문서 목록 새로고침
               await fetchDocuments();
-              
+
               // 3초 후 상태 초기화
               setTimeout(() => {
                 setUploadProgress(null);
                 setSelectedFile(null);
               }, 3000);
-              
+
             } else if (statusData.status === 'failed') {
               throw new Error(statusData.error_message || '처리 중 오류가 발생했습니다.');
             } else if (statusData.status === 'processing') {
@@ -157,7 +203,7 @@ const DocumentUpload = () => {
                 message: '텍스트 추출 및 임베딩 생성 중...',
                 progress
               });
-              
+
               attempts++;
               if (attempts < maxAttempts) {
                 setTimeout(poll, 5000); // 5초마다 상태 확인
@@ -198,7 +244,7 @@ const DocumentUpload = () => {
     setError(null);
   };
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: Document['status']) => {
     switch (status) {
       case 'completed':
         return <CheckCircle className="w-4 h-4 text-green-600" />;
@@ -211,7 +257,7 @@ const DocumentUpload = () => {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: Document['status']) => {
     switch (status) {
       case 'completed':
         return 'bg-green-100 text-green-800 border-green-200';
@@ -224,6 +270,15 @@ const DocumentUpload = () => {
     }
   };
 
+  const getStatusText = (status: Document['status']) => {
+    switch (status) {
+      case 'completed': return '완료';
+      case 'failed': return '실패';
+      case 'processing': return '처리중';
+      default: return '대기중';
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* 시스템 상태 표시 */}
@@ -232,7 +287,7 @@ const DocumentUpload = () => {
           <CardTitle className="flex items-center justify-between">
             <span className="flex items-center space-x-2">
               <Upload className="w-5 h-5 text-blue-600" />
-              <span>{t('admin.upload')}</span>
+              <span>PDF 업로드</span>
             </span>
             <Button
               variant="outline"
@@ -243,7 +298,7 @@ const DocumentUpload = () => {
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
           </CardTitle>
-          <CardDescription>{t('admin.uploadDesc')}</CardDescription>
+          <CardDescription>PDF 파일을 업로드하여 AI 벡터화 처리를 시작하세요</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* 에러 메시지 */}
@@ -257,7 +312,7 @@ const DocumentUpload = () => {
           {/* 업로드 영역 */}
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
             <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            
+
             {!uploadProgress ? (
               <>
                 <Input
@@ -283,10 +338,10 @@ const DocumentUpload = () => {
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      {t('common.loading')}
+                      업로드 중...
                     </>
                   ) : (
-                    t('admin.uploadButton')
+                    'PDF 업로드'
                   )}
                 </Button>
               </>
@@ -299,9 +354,9 @@ const DocumentUpload = () => {
                   {uploadProgress.stage === 'failed' && <XCircle className="w-5 h-5 text-red-600" />}
                   <span className="text-sm font-medium">{uploadProgress.message}</span>
                 </div>
-                
+
                 <Progress value={uploadProgress.progress} className="w-full" />
-                
+
                 {uploadProgress.stage === 'failed' && (
                   <Button
                     onClick={handleRetry}
@@ -322,7 +377,7 @@ const DocumentUpload = () => {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>{t('admin.documents')}</span>
+            <span>업로드된 문서</span>
             <span className="text-sm text-gray-500">
               총 {documents.length}개 문서
             </span>
@@ -337,7 +392,7 @@ const DocumentUpload = () => {
           ) : documents.length === 0 ? (
             <div className="text-center text-gray-500 py-8">
               <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p>{t('admin.noDocuments')}</p>
+              <p>업로드된 문서가 없습니다</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -377,11 +432,7 @@ const DocumentUpload = () => {
                     <span className={`px-2 py-1 rounded-full text-xs border ${getStatusColor(doc.status)}`}>
                       <span className="flex items-center space-x-1">
                         {getStatusIcon(doc.status)}
-                        <span>
-                          {doc.status === 'completed' ? '완료' :
-                           doc.status === 'failed' ? '실패' :
-                           doc.status === 'processing' ? '처리중' : '대기중'}
-                        </span>
+                        <span>{getStatusText(doc.status)}</span>
                       </span>
                     </span>
                     <span className={`px-2 py-1 rounded-full text-xs ${

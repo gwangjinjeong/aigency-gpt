@@ -5,10 +5,9 @@ from datetime import datetime
 
 class DocumentBase(BaseModel):
     filename: str
-    url: str
-    status: str
-    file_size: Optional[int] = None
-    error_message: Optional[str] = None
+    url: Optional[str] = None
+    status: str = 'pending'
+    # file_size와 error_message는 DB 스키마에 없음
 
 class DocumentCreate(DocumentBase):
     id: str
