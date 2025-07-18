@@ -71,9 +71,10 @@ interface UploadResponse {
 }
 
 interface StatusResponse {
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: string; // API call status
   document_id: string;
   filename: string;
+  processing_status: 'pending' | 'processing' | 'completed' | 'failed'; // Actual document status
   error_message?: string;
 }
 
@@ -163,14 +164,7 @@ const DocumentUpload = () => {
 
   // 컴포넌트 마운트 시 서버 연결 확인 및 문서 목록 조회
   useEffect(() => {
-    const initializeComponent = async () => {
-      const isConnected = await checkServerConnection();
-      if (isConnected) {
-        await fetchDocuments();
-      }
-    };
-
-    initializeComponent();
+    handleRefresh(); // 컴포넌트 마운트 시 바로 새로고침 로직 실행
   }, []);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -204,9 +198,10 @@ const DocumentUpload = () => {
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('auto_process', 'true'); // 자동 처리 활성화
 
       // 파일 업로드
-      const uploadResponse = await fetch(`${API_BASE_URL}/upload`, {
+      const uploadResponse = await fetch(`${API_BASE_URL}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -232,10 +227,10 @@ const DocumentUpload = () => {
 
         const poll = async () => {
           try {
-            const statusResponse = await fetch(`${API_BASE_URL}/upload/status/${documentId}`);
+            const statusResponse = await fetch(`${API_BASE_URL}/api/upload/status/${documentId}`);
             const statusData: StatusResponse = await statusResponse.json();
 
-            if (statusData.status === 'completed') {
+            if (statusData.processing_status === 'completed') {
               setUploadProgress({
                 stage: 'completed',
                 message: '처리가 완료되었습니다!',
@@ -251,9 +246,9 @@ const DocumentUpload = () => {
                 setSelectedFile(null);
               }, 3000);
 
-            } else if (statusData.status === 'failed') {
+            } else if (statusData.processing_status === 'failed') {
               throw new Error(statusData.error_message || '처리 중 오류가 발생했습니다.');
-            } else if (statusData.status === 'processing') {
+            } else if (statusData.processing_status === 'processing') {
               const progress = Math.min(30 + (attempts * 2), 90);
               setUploadProgress({
                 stage: 'processing',
@@ -572,6 +567,37 @@ const DocumentUpload = () => {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* 관리자 도구 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>관리자 도구</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Button 
+            variant="destructive"
+            onClick={async () => {
+              if (window.confirm('정말로 모든 벡터 데이터를 삭제하고 데이터베이스를 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                try {
+                  const response = await fetch(`${API_BASE_URL}/admin/reset-vector-db`, { method: 'POST' });
+                  const data = await response.json();
+                  if (response.ok) {
+                    alert('벡터 데이터베이스가 성공적으로 초기화되었습니다.');
+                    handleRefresh();
+                  } else {
+                    throw new Error(data.message || '초기화 실패');
+                  }
+                } catch (err) {
+                  alert(`초기화 중 오류 발생: ${err instanceof Error ? err.message : err}`);
+                }
+              }
+            }}
+          >
+            벡터 DB 초기화
+          </Button>
+          <p className="text-sm text-gray-500 mt-2">데이터 불일치 문제가 발생할 경우, 벡터 데이터베이스를 초기화하세요. 모든 문서의 벡터가 삭제되며, 재처리가 필요할 수 있습니다.</p>
         </CardContent>
       </Card>
     </div>

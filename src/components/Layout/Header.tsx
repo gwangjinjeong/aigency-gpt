@@ -32,6 +32,12 @@ const Header = () => {
               >
                 <span>{t('nav.admin')}</span>
               </a>
+              <a
+                href="/pdf"
+                className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              >
+                <span>PDF Viewer</span>
+              </a>
             </nav>
           </div>
 

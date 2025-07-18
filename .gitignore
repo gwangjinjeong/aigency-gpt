@@ -24,4 +24,5 @@ dist-ssr
 *.sw?
 /backend/chroma_db/*
 /backend/pdf_cache/*
-/backend/.env
+/backend/.env*
+/.gemini/

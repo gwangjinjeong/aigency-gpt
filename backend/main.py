@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import List, Optional
 from postgrest.exceptions import APIError
 import traceback
-from app.api import upload, documents, chat
+from app.api import upload, chat
 
 app = FastAPI(
     title="PDF Vectorization API",
@@ -22,7 +22,6 @@ app = FastAPI(
 )
 
 app.include_router(upload.router, prefix="/api", tags=["upload"])
-app.include_router(documents.router, prefix="/api", tags=["documents"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 
 # CORS 설정 (React 앱에서 API 호출을 위해)
@@ -105,136 +104,7 @@ async def health_check():
         }
 
 
-@app.post("/upload", response_model=ProcessResponse)
-async def upload_pdf(
-        background_tasks: BackgroundTasks,
-        file: UploadFile = File(...),
-        auto_process: bool = Form(True)
-):
-    """
-    PDF 파일 업로드 및 처리
-    """
-    try:
-        # 파일 검증
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
 
-        # 파일 크기 확인 (50MB 제한)
-        file_content = await file.read()
-        file_size = len(file_content)
-
-        if file_size > 50 * 1024 * 1024:  # 50MB
-            raise HTTPException(
-                status_code=400,
-                detail=f"파일 크기가 너무 큽니다. 최대 50MB (현재: {file_size / (1024 * 1024):.1f}MB)"
-            )
-
-        # 고유한 파일명 생성
-        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'pdf'
-        unique_filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}.{file_extension}"
-        bucket_name = "pdf-documents"
-
-        print(f"📤 파일 업로드 시작: {file.filename} -> {unique_filename}")
-
-        # Supabase Storage에 업로드
-        try:
-            upload_response = supabase.storage.from_(bucket_name).upload(
-                path=unique_filename,
-                file=file_content,
-                file_options={"content-type": "application/pdf"}
-            )
-            print(f"✅ Storage 업로드 성공: {upload_response}")
-        except Exception as upload_error:
-            raise HTTPException(status_code=500, detail=f"파일 업로드 실패: {str(upload_error)}")
-
-        # 공개 URL 생성
-        try:
-            supabase_file_url = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
-            print(f"🔗 공개 URL: {supabase_file_url}")
-        except Exception:
-            supabase_file_url = f"{supabase.url}/storage/v1/object/public/{bucket_name}/{unique_filename}"
-
-        # DB에 메타데이터 저장 (현재 테이블 스키마에 맞게 수정)
-        document_id = str(uuid.uuid4())
-
-        try:
-            # 현재 테이블 스키마에 맞춰 저장 (file_size 제외)
-            db_response = supabase.from_('documents').insert({
-                'id': document_id,
-                'filename': file.filename,
-                'url': supabase_file_url,
-                'status': 'pending'
-                # created_at은 DEFAULT로 자동 설정됨
-                # file_size는 테이블에 컬럼이 없으므로 제외
-            }).execute()
-
-            print(f"✅ DB 저장 성공: {document_id}")
-            print(f"DB Response: {db_response}")
-
-        except Exception as db_error:
-            print(f"❌ DB 저장 실패: {db_error}")
-            print(f"DB Error Details: {type(db_error).__name__}: {str(db_error)}")
-
-            # Storage에서 업로드된 파일 삭제 (정리)
-            try:
-                supabase.storage.from_(bucket_name).remove([unique_filename])
-                print(f"🗑️ Storage 파일 정리 완료: {unique_filename}")
-            except Exception as cleanup_error:
-                print(f"⚠️ Storage 파일 정리 실패: {cleanup_error}")
-
-            raise HTTPException(status_code=500, detail=f"메타데이터 저장 실패: {str(db_error)}")
-
-        # 자동 처리 옵션이 켜져있으면 백그라운드에서 처리
-        if auto_process:
-            background_tasks.add_task(
-                process_single_document,
-                document_id,
-                file.filename,
-                supabase_file_url
-            )
-
-        return ProcessResponse(
-            status="success",
-            message="파일 업로드 완료" + (" 및 처리 시작" if auto_process else ""),
-            document_id=document_id,
-            filename=file.filename,
-            file_size=file_size,
-            processing=auto_process
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ 업로드 오류: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"업로드 처리 중 오류: {str(e)}")
-
-
-# 새로 추가: 업로드 상태 확인 API
-@app.get("/upload/status/{document_id}")
-async def get_upload_status(document_id: str):
-    """
-    업로드 상태 확인
-    """
-    try:
-        response = supabase.from_('documents').select('*').eq('id', document_id).execute()
-
-        if not response.data:
-            raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-
-        doc = response.data[0]
-        return {
-            "status": doc['status'],
-            "document_id": document_id,
-            "filename": doc['filename'],
-            "error_message": doc.get('error_message')  # 테이블에 없으면 None 반환
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ 상태 확인 오류: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/documents", response_model=DocumentListResponse)
@@ -409,6 +279,80 @@ async def global_exception_handler(request, exc):
             "detail": str(exc) if os.getenv("DEBUG") else "Internal server error"
         }
     )
+
+# --- 관리자용 엔드포인트 ---
+from app.services import document_processor
+import traceback
+from fastapi import HTTPException
+import shutil
+import os
+import chromadb
+
+@app.post("/admin/reset-vector-db")
+async def reset_vector_db():
+    """
+    Supabase Storage, DB, 로컬 벡터 DB, PDF 캐시를 포함한 모든 데이터를 삭제하고 초기화합니다.
+    경고: 모든 데이터가 영구적으로 삭제됩니다.
+    """
+    print("--- ⚠️ 전체 시스템 데이터 초기화 시작... ---")
+    try:
+        # 1. Supabase에서 모든 문서 정보 가져오기
+        print("--- Supabase에서 모든 문서 목록 조회 중... ---")
+        docs_response = document_processor.supabase.from_('documents').select('id, url').execute()
+        all_documents = docs_response.data
+
+        if all_documents:
+            # 2. Supabase Storage에서 모든 파일 삭제
+            print(f"--- Supabase Storage에서 {len(all_documents)}개 파일 삭제 중... ---")
+            file_paths_to_delete = []
+            for doc in all_documents:
+                # URL에서 파일 경로 추출 (더 안정적인 방식)
+                try:
+                    file_path = doc['url'].split(f"/{document_processor.settings.SUPABASE_BUCKET_NAME}/")[-1]
+                    file_paths_to_delete.append(file_path)
+                except Exception as e:
+                    print(f"⚠️ 파일 경로 추출 실패 (문서 ID: {doc['id']}): {e}")
+            
+            if file_paths_to_delete:
+                document_processor.supabase.storage.from_(document_processor.settings.SUPABASE_BUCKET_NAME).remove(file_paths_to_delete)
+                print("✅ Supabase Storage 파일 삭제 완료.")
+
+            # 3. Supabase DB에서 모든 레코드 삭제
+            print("--- Supabase DB에서 모든 레코드 삭제 중... ---")
+            document_processor.supabase.from_('documents').delete().neq('id', '00000000-0000-0000-0000-000000000000').execute() # 모든 레코드 삭제
+            print("✅ Supabase DB 레코드 삭제 완료.")
+        else:
+            print("--- Supabase에 삭제할 문서가 없습니다. ---")
+
+        # 4. 로컬 ChromaDB 폴더 삭제
+        chroma_db_path = "./chroma_db"
+        if os.path.exists(chroma_db_path):
+            shutil.rmtree(chroma_db_path)
+            print(f"✅ '{chroma_db_path}' 폴더 삭제 완료.")
+
+        # 5. 로컬 PDF 캐시 폴더 삭제
+        pdf_cache_path = "./pdf_cache"
+        if os.path.exists(pdf_cache_path):
+            shutil.rmtree(pdf_cache_path)
+            print(f"✅ '{pdf_cache_path}' 폴더 삭제 완료.")
+
+        # 6. 빈 폴더 재생성 및 ChromaDB 클라이언트 재초기화
+        os.makedirs(chroma_db_path, exist_ok=True)
+        os.makedirs(pdf_cache_path, exist_ok=True)
+        print("--- ChromaDB 클라이언트 및 컬렉션 재초기화 중... ---")
+        new_client = chromadb.PersistentClient(path=chroma_db_path)
+        new_collection = new_client.get_or_create_collection(name=document_processor.collection_name)
+        document_processor.chroma_client = new_client
+        document_processor.vector_collection = new_collection
+        
+        print("✅ 모든 데이터가 성공적으로 초기화되었습니다.")
+        return {"status": "success", "message": "Supabase와 로컬 데이터가 모두 초기화되었습니다."}
+
+    except Exception as e:
+        print(f"❌ 전체 초기화 실패: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"전체 초기화 실패: {e}")
+
 
 
 if __name__ == "__main__":

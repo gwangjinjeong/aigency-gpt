@@ -60,9 +60,15 @@ async def upload_pdf(
 
         # 공개 URL 생성
         try:
-            supabase_file_url = supabase.storage.from_(settings.SUPABASE_BUCKET_NAME).get_public_url(unique_filename)
+            # .get_public_url()의 결과에서 .data['publicUrl']을 직접 사용
+            supabase_file_url = supabase.storage.from_(settings.SUPABASE_BUCKET_NAME).get_public_url(unique_filename).data['publicUrl']
+
+            if not supabase_file_url:
+                raise ValueError("Supabase에서 유효한 공개 URL을 받지 못했습니다.")
+
             print(f"🔗 공개 URL: {supabase_file_url}")
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ get_public_url 실패 ({e}), 수동으로 URL 구성")
             supabase_file_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.SUPABASE_BUCKET_NAME}/{unique_filename}"
 
         # DB에 메타데이터 저장
@@ -74,13 +80,18 @@ async def upload_pdf(
                     'id': document_id,
                     'filename': file.filename,
                     'url': supabase_file_url,
-                    'status': 'pending',
-                    'created_at': datetime.now().isoformat()
+                    'status': 'pending'
                 }
             ]).execute()
             print(f"✅ DB 저장 성공: {document_id}")
         except Exception as db_error:
             print(f"❌ DB 저장 실패: {db_error}")
+            # 롤백: Storage에서 업로드된 파일 삭제
+            try:
+                supabase.storage.from_(settings.SUPABASE_BUCKET_NAME).remove([unique_filename])
+                print(f"🗑️ Storage 파일 롤백 완료: {unique_filename}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Storage 파일 롤백 실패: {cleanup_error}")
             raise HTTPException(status_code=500, detail=f"메타데이터 저장 실패: {str(db_error)}")
 
         # 자동 처리 옵션이 켜져있으면 백그라운드에서 처리

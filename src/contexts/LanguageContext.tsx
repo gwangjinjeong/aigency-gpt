@@ -20,6 +20,17 @@ const translations = {
     'common.loading': '로딩 중...',
     'common.error': '오류가 발생했습니다',
     'common.success': '성공적으로 완료되었습니다',
+
+    // Landing
+    'landing.startChat': '시작하기',
+
+    // Chat
+    'chat.title': 'AI 문서 대화',
+    'chat.welcome': '안녕하세요! PDF 문서에 대해 질문해보세요.',
+    'chat.placeholder': '질문을 입력하세요...',
+    'chat.references': '참조 문서',
+    'chat.page': '페이지',
+    'chat.noDocument': '문서가 선택되지 않았습니다',
   },
   en: {
     // Navigation
@@ -32,6 +43,17 @@ const translations = {
     'common.loading': 'Loading...',
     'common.error': 'An error occurred',
     'common.success': 'Successfully completed',
+
+    // Landing
+    'landing.startChat': 'Get Started',
+
+    // Chat
+    'chat.title': 'AI Document Chat',
+    'chat.welcome': 'Hello! Feel free to ask questions about your PDF documents.',
+    'chat.placeholder': 'Enter your question...',
+    'chat.references': 'References',
+    'chat.page': 'Page',
+    'chat.noDocument': 'No document selected',
   }
 };
 
