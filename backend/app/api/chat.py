@@ -12,6 +12,8 @@ import tempfile
 from typing import List, Dict, Any, Optional
 import traceback
 
+from app.services.query_rewriter import rewrite_query
+
 router = APIRouter()
 
 
@@ -23,7 +25,7 @@ async def chat_with_documents(request: ChatRequest):
     start_time = time.time()
 
     try:
-        # 1. 사용자 질문을 임베딩으로 변환
+        # 1. 사용자 질문을 임베딩으로 변환 (질문 재구성 제거)
         query_embedding = get_embeddings([request.message])[0]
 
         # 2. 유사한 문서 청크 검색
@@ -113,31 +115,73 @@ async def chat_with_documents(request: ChatRequest):
         # 4. OpenAI API로 답변 생성
         context = "\n\n".join(context_chunks[:3])
 
-        system_prompt = """당신은 PDF 문서의 내용을 바탕으로 질문에 답하는 AI 어시스턴트입니다. 
-다음 규칙을 따라주세요:
-1. 제공된 문서 내용만을 바탕으로 답변하세요
-2. 문서에 없는 내용은 추측하지 마세요
-3. 한국어로 명확하고 정확하게 답변하세요
-4. 답변의 근거가 되는 문서 내용을 언급하세요
-5. 확실하지 않은 경우 그렇다고 명시하세요"""
+        # 대화 기록을 포함하여 프롬프트 재구성
+        messages = [
+            {"role": "system", "content": """Your Role: You are a 'Bank Product Specialist AI'. Your sole mission is to provide accurate and reliable information about financial products based only on the provided 'context' document. NEVER guess or use external knowledge.
+            Core Principles**
+            1.  Respond in Korean**: All final answers to the user **must be written in clear and natural Korean.
+            2.  Strictly Grounded Answering**: All answers must be based strictly on the information stated in the 'context'
+            3.  Accuracy**: You must convey all numbers, conditions, and names with perfect accuracy.
+            4.  Professional Tone**: Regardless of the user's tone, you must always maintain a neutral, objective, and expert tone. Do not recommend products or offer personal opinions.
+            
+            Guide by Question Type
+            1. Fact-Based Questions
+            When the user asks for specific information (loan limit, interest rate, term, etc.), deliver the facts from the 'context' concisely and without distortion.
+            - User Question: "우리은행 네이버 스마트스토어 대출의 상환 방식은 무엇인가요?"
+            - 'context': '만기일시상환, 원(리)금균등분할상환, 마이너스통장'
+            - Correct Answer: "만기일시상환, 원리금균등분할상환, 원금균등분할상환, 마이너스통장 방식 중에서 선택 가능합니다."
+            
+            2. Inferential Questions
+            If the 'context' doesn't state something directly but a logical inference is needed, answer using cautious phrasing like **'~일 수 있습니다' (it may be...), '~할 가능성이 있습니다' (it's possible that...), or '~에 따라 달라질 수 있습니다' (it can depend on...).
+            - User Question**: "스마트스토어 개설 후 1개월 된 셀러는 이 상품을 신청할 수 있나요?"
+            - 'context': '사업자등록 후 3개월 이상 경과해야 함'
+            - Correct Answer**: "아니요, 제공된 정보에 따르면 사업자등록 후 3개월 이상 경과해야 하므로 신청이 어려울 수 있습니다."
+            
+            3. Fact-Checking & Correction Questions
+            If the user's question contains information that contradicts the `context`, NEVER agree with them. Politely correct the misinformation based on the facts in the 'context'
+            - User Question: "우리은행 네이버 스마트스토어 대출은 부동산 담보가 필요하다고 들었어요
+            - 'context': '무담보 신용대출'
+            - Correct Answer: "아닙니다. 확인된 정보에 따르면 해당 상품은 부동산 담보가 필요 없는 무담보 신용대출입니다."
+            
+            4. Multi-Part Questions
+            If the user asks multiple things at once, break down the query and answer each part clearly and sequentially.
+            - User Question: "제가 스마트스토어 운영 4개월차이고, CB 등급은 3등급입니다. 대출 가능할까요?"
+            - 'context': '3개월 이상 경과', 'CB 4(+) 이하 신규 불가'
+            - Correct Answer**: "네, 문의하신 조건(스마트스토어 운영 4개월, CB 3등급)은 상품의 기본 자격 요건을 충족하므로 신청 가능합니다."
+            
+            5. Eligibility & Informal Questions
+            When a user asks about their eligibility using an informal tone, maintain a professional tone while answering clearly and firmly. If they do not qualify, you must politely but explicitly explain the reason for rejection based on the `context`.
+            - User Question: "야 나 무직이거든? 우리주거래 신용대출 받을 수 있어?"
+            - 'context': '(상품 정보에 '직장인 대상 신용대출' 명시)'
+            - Correct Answer: "문의주신 우리주거래 신용대출은 직장인 대상 상품으로, 현재 직업이 없으시다면 해당 상품의 이용은 어렵습니다."
+"""}
+        ]
 
-        user_prompt = f"""문서 내용:
+        if request.history:
+            for message in request.history:
+                messages.append({"role": message.role, "content": message.content})
+
+        user_prompt = f"""**대화 기록:**
+{request.history if request.history else '이전 대화 없음'}
+
+**새로운 문서 내용:**
 {context}
 
-질문: {request.message}
+**사용자 질문:** {request.message}
 
-위 문서 내용을 바탕으로 질문에 답변해주세요."""
+---
+위 대화 기록과 새로운 문서 내용을 종합하여 사용자 질문에 답변해주세요."""
+        
+        messages.append({"role": "user", "content": user_prompt})
 
         try:
             response = openai.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                messages=messages,
                 temperature=0.1,
                 max_tokens=1000
             )
+
 
             answer = response.choices[0].message.content
 
@@ -178,28 +222,31 @@ async def get_document_info(document_id: str) -> Dict:
 @router.post("/highlight")
 async def create_highlighted_response(
         document_id: str,
-        page_number: int,
-        search_text: str
+        chunk_hash: str
 ):
     """
     특정 텍스트를 하이라이트한 PDF 생성 (캐시 활용)
     """
     try:
-        # 캐시된 PDF 파일 경로 직접 활용
+        # 1. 문서의 원본 청크 내용 조회
+        chunk_query = vector_collection.get(where={"document_id": document_id, "chunk_hash": chunk_hash}, limit=1)
+        if not chunk_query or not chunk_query["documents"]:
+            raise HTTPException(status_code=404, detail="해당 청크를 찾을 수 없습니다.")
+        search_text = chunk_query["documents"][0]
+
+        # 2. 캐시된 PDF 파일 경로 가져오기
         try:
             pdf_file_path = get_document_pdf_path(document_id)
         except Exception as path_error:
             print(f"⚠️ 캐시된 PDF 파일 경로 조회 실패, 문서 정보로 fallback: {path_error}")
-            # fallback: 문서 정보 조회 후 다운로드
             doc_info = await get_document_info(document_id)
             if not doc_info.get('url'):
                 raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-
             pdf_file_path = ensure_pdf_cache_exists(document_id, doc_info)
             if not pdf_file_path:
                 raise HTTPException(status_code=500, detail="PDF 파일을 준비할 수 없습니다.")
 
-        # 텍스트 위치 찾기
+        # 3. 텍스트 위치 찾기
         locations = find_text_locations(pdf_file_path, search_text)
 
         if not locations:

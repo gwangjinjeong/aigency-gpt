@@ -158,57 +158,56 @@ class PDFProcessor:
                     pass
 
     def find_text_in_pdf(self, file_path: str, search_text: str, context_chars: int = 100) -> List[TextLocation]:
-        """PDF에서 특정 텍스트의 위치를 찾기 (개선된 한글 검색)"""
+        """PDF에서 특정 텍스트의 위치를 찾기 (개선된 한글 검색 및 부분 일치)"""
         doc = None
         try:
             doc = fitz.open(file_path)
             locations = []
 
-            # 🔥 검색어 정규화
-            search_text_normalized = self.normalize_text(search_text)
-            logger.info(f"검색 시작: 파일 '{file_path}', 원본 검색어 '{search_text}', 정규화된 검색어 '{search_text_normalized}'")
+            # 검색어의 앞 30자만 사용 (안정성 확보)
+            search_snippet = search_text[:30]
+            search_snippet_normalized = self.normalize_text(search_snippet)
+            
+            logger.info(f"검색 시작: 파일 '{file_path}', 원본 검색어 '{search_text}', 검색 스니펫 '{search_snippet_normalized}'")
 
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                page_full_text = page.get_text("text")
+                
+                # PyMuPDF의 search_for로 위치 찾기
+                text_instances = page.search_for(search_snippet_normalized)
 
-                # 🔥 페이지 텍스트 정규화
-                page_text_normalized = self.normalize_text(page_full_text)
+                if text_instances:
+                    logger.info(f"페이지 {page_num + 1}에서 '{search_snippet_normalized}' 검색 결과: {len(text_instances)}개 발견")
+                    page_full_text = page.get_text("text")
+                    page_text_normalized = self.normalize_text(page_full_text)
 
-                logger.debug(f"페이지 {page_num + 1} 텍스트 (일부): {page_text_normalized[:200]}...")
-
-                # 🔥 정규화된 텍스트끼리 비교
-                if search_text_normalized.lower() in page_text_normalized.lower():
-                    logger.info(f"페이지 {page_num + 1}에서 텍스트 발견!")
-
-                    # PyMuPDF의 search_for로 정확한 위치 찾기 (원본 검색어 사용)
-                    text_instances = page.search_for(search_text)
-
-                    # 🔥 원본으로 못 찾으면 정규화된 검색어로 시도
-                    if not text_instances:
-                        text_instances = page.search_for(search_text_normalized)
-                        logger.info(f"정규화된 검색어로 재시도: {len(text_instances)}개 발견")
-
-                    logger.info(f"페이지 {page_num + 1}에서 '{search_text}' 검색 결과: {len(text_instances)}개 발견")
-
-                    if text_instances:
-                        for rect in text_instances:
-                            # 🔥 문맥 추출 개선
-                            match_start_idx = page_text_normalized.lower().find(search_text_normalized.lower())
+                    for rect in text_instances:
+                        # 문맥 추출
+                        # find_text_in_pdf 함수 내에서 context를 추출하는 부분 수정
+                        try:
+                            # PyMuPDF Rect 객체에서 직접 텍스트를 추출하여 정확도 향상
+                            matched_text = page.get_text("text", clip=rect)
+                            match_start_idx = page_text_normalized.lower().find(matched_text.lower())
+                            
                             context = ""
                             if match_start_idx != -1:
                                 start_idx = max(0, match_start_idx - context_chars)
-                                end_idx = min(len(page_full_text),
-                                              match_start_idx + len(search_text_normalized) + context_chars)
+                                end_idx = min(len(page_full_text), match_start_idx + len(matched_text) + context_chars)
                                 context = page_full_text[start_idx:end_idx]
+                            else:
+                                # 백업: Rect 주변 텍스트 추출
+                                context = page.get_text("text", clip=rect.irect.expand(10))
 
-                            location = TextLocation(
-                                page_number=page_num + 1,
-                                bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
-                                text=search_text_normalized,  # 🔥 정규화된 텍스트 사용
-                                context=context
-                            )
-                            locations.append(location)
+                        except Exception:
+                            context = "(문맥 추출 오류)"
+
+                        location = TextLocation(
+                            page_number=page_num + 1,
+                            bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
+                            text=search_text, # 원본 검색어를 반환
+                            context=context
+                        )
+                        locations.append(location)
 
             return locations
 
@@ -625,8 +624,45 @@ def find_text_locations(file_path: str, search_text: str) -> List[TextLocation]:
 
 
 def create_highlighted_pdf(file_path: str, text_locations: List[TextLocation], output_path: str = None) -> str:
-    """하이라이트된 PDF 생성"""
-    return pdf_processor.create_highlight_annotations(file_path, text_locations, output_path)
+    """하이라이트된 PDF 생성 (전체 문서 유지)"""
+    doc = None
+    try:
+        # 원본 문서를 열고, 수정본을 위한 새 문서를 만들지 않습니다.
+        doc = fitz.open(file_path)
+
+        for location in text_locations:
+            if location.page_number <= len(doc):
+                page = doc.load_page(location.page_number - 1)
+                
+                # PyMuPDF의 search_for를 사용해 텍스트의 정확한 위치를 다시 한번 찾습니다.
+                # 이는 find_text_locations에서 반환된 bbox가 때때로 부정확할 수 있기 때문입니다.
+                rects = page.search_for(location.text, quads=False)
+                
+                for rect in rects:
+                    highlight = page.add_highlight_annot(rect)
+                    highlight.set_colors(stroke=[1, 1, 0]) # Yellow
+                    highlight.update()
+
+        # 변경사항을 포함하여 전체 문서를 새 파일에 저장합니다.
+        if not output_path:
+            # 임시 파일로 저장하여 반환
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                output_path = temp_file.name
+        
+        doc.save(output_path, garbage=4, deflate=True, clean=True)
+        logger.info(f"하이라이트된 PDF 저장 완료: {output_path}")
+        return output_path
+
+    except Exception as e:
+        logger.error(f"하이라이트 추가 실패: {e}")
+        # 오류 발생 시 원본 파일 경로 반환
+        return file_path
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception as e:
+                logger.error(f"PDF 문서 닫기 실패: {e}")
 
 
 def create_rag_response_with_pages(file_path: str, matched_chunks: List[Dict], question: str) -> Dict:

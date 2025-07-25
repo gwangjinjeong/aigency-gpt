@@ -51,6 +51,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    history: Optional[List[ChatMessage]] = None
     document_ids: Optional[List[str]] = None  # 특정 문서에서만 검색
     max_results: int = 5
 

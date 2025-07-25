@@ -50,12 +50,14 @@ const EnhancedPDFViewer: React.FC<PDFViewerProps> = ({ document }) => {
   const pageContainerRef = useRef<HTMLDivElement>(null);
 
   const getSearchableSnippet = (text: string): string => {
-    const trimmedText = text.trim();
-    const sentenceEnd = trimmedText.indexOf('.');
-    if (sentenceEnd > 10 && sentenceEnd < 100) {
-      return trimmedText.substring(0, sentenceEnd + 1);
+    const words = text.trim().split(/\s+/);
+    // 텍스트 덩어리의 가장 핵심적인 가운데 부분을 검색어로 사용
+    if (words.length > 15) {
+        const midIndex = Math.floor(words.length / 2);
+        const start = Math.max(0, midIndex - 7);
+        return words.slice(start, start + 15).join(' ');
     }
-    return trimmedText.split(/\s+/).slice(0, 10).join(' ');
+    return words.join(' ');
   };
 
   useEffect(() => {

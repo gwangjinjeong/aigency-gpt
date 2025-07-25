@@ -5,8 +5,6 @@ import openai
 from typing import List, Dict
 from dotenv import load_dotenv
 
-# backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-# env_path = os.path.join(backend_dir, '.env')
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
